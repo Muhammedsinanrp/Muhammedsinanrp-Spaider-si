@@ -1,0 +1,30 @@
+#!/usr/bin/env bash
+# SPAIDER Linux CLI Tool Launcher
+# Usage: spaider [scan|ai|malware|status|serve|web|console] [options]
+
+set -e
+
+# Resolve directory of this script
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+# Find Python executable
+if [ -n "$VIRTUAL_ENV" ] && [ -x "$VIRTUAL_ENV/bin/python" ]; then
+    PYTHON_CMD="$VIRTUAL_ENV/bin/python"
+elif [ -x "$PROJECT_ROOT/.venv/bin/python" ]; then
+    PYTHON_CMD="$PROJECT_ROOT/.venv/bin/python"
+elif [ -x "$PROJECT_ROOT/venv/bin/python" ]; then
+    PYTHON_CMD="$PROJECT_ROOT/venv/bin/python"
+elif [ -x "/opt/spaider/venv/bin/python" ]; then
+    PYTHON_CMD="/opt/spaider/venv/bin/python"
+elif command -v python3 >/dev/null 2>&1; then
+    PYTHON_CMD="$(command -v python3)"
+elif command -v python >/dev/null 2>&1; then
+    PYTHON_CMD="$(command -v python)"
+else
+    echo "[-] Error: Python 3 is not installed or not in PATH."
+    exit 1
+fi
+
+export PYTHONPATH="$PROJECT_ROOT/backend:$PYTHONPATH"
+exec "$PYTHON_CMD" "$PROJECT_ROOT/backend/app/cli.py" "$@"

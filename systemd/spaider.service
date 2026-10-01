@@ -1,0 +1,21 @@
+[Unit]
+Description=SPAIDER — AI-Powered Cybersecurity Command Platform
+Documentation=https://github.com/spaider-ai/spaider
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/spaider
+Environment="PATH=/opt/spaider/.venv/bin:/usr/local/bin:/usr/bin"
+ExecStart=/opt/spaider/.venv/bin/python /opt/spaider/backend/app/cli.py serve --host 0.0.0.0 --port 8001
+Restart=always
+RestartSec=5s
+
+# Security hardening
+ProtectSystem=full
+ProtectHome=read-only
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

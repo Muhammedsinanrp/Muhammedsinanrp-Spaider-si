@@ -1,0 +1,41 @@
+# SPAIDER Backend — Core dependencies (local dev, Python 3.12+)
+# Heavy ML/security packages marked optional — install separately when needed
+
+# ── Web framework ─────────────────────────────────────────────────
+fastapi>=0.111.0
+uvicorn[standard]>=0.29.0
+python-multipart>=0.0.9
+
+# ── Database (sync fallback for local dev) ────────────────────────
+sqlalchemy>=2.0.30
+aiosqlite>=0.20.0
+
+# ── Settings & validation ─────────────────────────────────────────
+pydantic>=2.7.1
+pydantic-settings>=2.2.1
+python-dotenv>=1.0.1
+
+# ── Auth ──────────────────────────────────────────────────────────
+python-jose[cryptography]>=3.3.0
+passlib[bcrypt]>=1.7.4
+
+# ── HTTP / WebSocket ──────────────────────────────────────────────
+httpx>=0.27.0
+websockets>=12.0
+
+# ── Task queue (optional — works without Redis locally) ───────────
+celery>=5.4.0
+redis>=5.0.4
+
+# ── AI ────────────────────────────────────────────────────────────
+openai>=1.30.1
+anthropic>=0.28.0
+
+# ── Utilities ────────────────────────────────────────────────────
+aiofiles>=23.2.1
+structlog>=24.1.0
+tenacity>=8.3.0
+rich>=13.7.1
+httpx>=0.27.0
+xmltodict>=0.13.0
+psutil>=5.9.8
