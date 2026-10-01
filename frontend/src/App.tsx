@@ -1,4 +1,4 @@
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
+import { HashRouter, Routes, Route, Navigate } from 'react-router-dom'
 import Layout from './components/Layout'
 import Dashboard from './pages/Dashboard'
 import Scans from './pages/Scans'
@@ -16,7 +16,7 @@ import WebSecurity from './pages/WebSecurity'
 
 export default function App() {
   return (
-    <BrowserRouter>
+    <HashRouter>
       <Routes>
         <Route path="/" element={<Layout />}>
           <Route index element={<Navigate to="/dashboard" replace />} />
@@ -33,8 +33,9 @@ export default function App() {
           <Route path="mitre" element={<MitreAttack />} />
           <Route path="plugins" element={<Plugins />} />
           <Route path="reports" element={<Reports />} />
+          <Route path="*" element={<Navigate to="/dashboard" replace />} />
         </Route>
       </Routes>
-    </BrowserRouter>
+    </HashRouter>
   )
 }
