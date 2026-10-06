@@ -206,6 +206,90 @@ async def get_report(report_id: str, db: AsyncSession = Depends(get_db)):
     }
 
 
+@router.post("/scan/{scan_id}/generate", status_code=201)
+@router.post("/{scan_id}/generate", status_code=201)
+async def generate_scan_report(
+    scan_id: str,
+    report_type: str = "technical",
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Generate complete assessment report for a specific scan.
+    Produces structured executive summary, technical vulnerability findings with PoCs, and remediation plans.
+    """
+    content = await _build_report_content(report_type, db, [scan_id], [])
+
+    report = Report(
+        id=str(uuid.uuid4()),
+        title=f"Security Assessment Report — Scan {scan_id[:8]}",
+        report_type=report_type,
+        content=content,
+    )
+    db.add(report)
+    await db.commit()
+    await db.refresh(report)
+
+    return {
+        "id": str(report.id),
+        "scan_id": scan_id,
+        "title": report.title,
+        "report_type": report.report_type,
+        "status": "generated",
+        "content": content,
+        "created_at": report.created_at,
+    }
+
+
+@router.get("/{report_id}/markdown")
+async def get_report_markdown(report_id: str, db: AsyncSession = Depends(get_db)):
+    """Export report as formatted Markdown document."""
+    result = await db.execute(select(Report).where(Report.id == report_id))
+    report = result.scalar_one_or_none()
+    if not report:
+        raise HTTPException(status_code=404, detail="Report not found")
+
+    content = report.content or {}
+    findings = content.get("findings", [])
+    breakdown = content.get("severity_breakdown", {})
+
+    md = [
+        f"# 🕷️ SPAiDER Security Assessment Report",
+        f"**Title**: {report.title}  ",
+        f"**Date**: {report.created_at.strftime('%Y-%m-%d %H:%M:%S UTC')}  ",
+        f"**Report Type**: {report.report_type.upper()}  ",
+        f"",
+        f"## 1. Executive Summary",
+        content.get("executive_summary", "Automated vulnerability scan completed."),
+        f"",
+        f"### Severity Distribution",
+        f"| Severity | Count |",
+        f"| :--- | :--- |",
+        f"| 🔴 Critical | {breakdown.get('CRITICAL', 0)} |",
+        f"| 🟠 High | {breakdown.get('HIGH', 0)} |",
+        f"| 🟡 Medium | {breakdown.get('MEDIUM', 0)} |",
+        f"| 🔵 Low | {breakdown.get('LOW', 0)} |",
+        f"",
+        f"## 2. Technical Findings & Proof of Concept",
+    ]
+
+    for i, f in enumerate(findings, 1):
+        md.append(f"### {i}. [{f.get('severity', 'INFO')}] {f.get('title')}")
+        md.append(f"- **Asset**: `{f.get('asset')}`")
+        md.append(f"- **Endpoint**: `{f.get('endpoint')}`")
+        if f.get("cvss"):
+            md.append(f"- **CVSS v3.1**: {f.get('cvss')}")
+        if f.get("cwe"):
+            md.append(f"- **CWE**: {f.get('cwe')}")
+        md.append(f"\n**Description**:\n{f.get('description')}\n")
+        if f.get("curl_poc"):
+            md.append(f"**Reproduction Command (cURL)**:\n```bash\n{f.get('curl_poc')}\n```\n")
+        if f.get("remediation"):
+            md.append(f"**Remediation Plan**:\n{f.get('remediation')}\n")
+        md.append("---\n")
+
+    return {"report_id": report_id, "format": "markdown", "markdown": "\n".join(md)}
+
+
 @router.delete("/{report_id}", status_code=204)
 async def delete_report(report_id: str, db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(Report).where(Report.id == report_id))

@@ -1,6 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
-import { useMutation } from '@tanstack/react-query'
-import { api } from '../api/client'
+import { toolApi } from '../api/client'
 import toast from 'react-hot-toast'
 
 // ── Tool Definitions ──────────────────────────────────────────────────
@@ -180,7 +179,201 @@ const TOOLS = [
     task: 'analyze_pcap',
     queue: 'BLUE',
   },
+  {
+    id: 'shodan',
+    name: 'Shodan',
+    version: '1.0',
+    icon: '🌐',
+    category: 'OSINT',
+    color: '#e11d48',
+    desc: 'Internet-wide host intelligence — open ports, banners, CVEs, geolocation, and exposure analysis',
+    status: 'ready',
+    fields: [
+      { key: 'query',      label: 'Query / IP',         placeholder: '8.8.8.8  or  apache port:8080', type: 'text' },
+      { key: 'query_type', label: 'Query Type',          type: 'select', options: ['host','search','dns'] },
+      { key: 'api_key',    label: 'API Key (optional)',  placeholder: 'Overrides SHODAN_API_KEY env var', type: 'password' },
+    ],
+    task: 'osint_shodan',
+    queue: 'RED',
+  },
+  {
+    id: 'virustotal',
+    name: 'VirusTotal',
+    version: '3.0',
+    icon: '🦠',
+    category: 'Threat Intel',
+    color: '#3b82f6',
+    desc: 'Multi-engine AV/reputation analysis — scan files, URLs, IPs, and domains against 70+ security engines',
+    status: 'ready',
+    fields: [
+      { key: 'target',    label: 'Target',              placeholder: 'https://evil.com  or  d41d8cd98f  or  8.8.8.8', type: 'text' },
+      { key: 'scan_type', label: 'Scan Type',           type: 'select', options: ['url','ip','domain','hash'] },
+      { key: 'api_key',   label: 'API Key (optional)',  placeholder: 'Overrides VIRUSTOTAL_API_KEY env var', type: 'password' },
+    ],
+    task: 'osint_virustotal',
+    queue: 'RED',
+  },
+  {
+    id: 'truecaller',
+    name: 'Truecaller',
+    version: '1.0',
+    icon: '📞',
+    category: 'OSINT',
+    color: '#10b981',
+    desc: 'Phone number intelligence — caller identity, spam score, carrier, location, and social profile enrichment',
+    status: 'ready',
+    fields: [
+      { key: 'phone',        label: 'Phone Number',       placeholder: '9876543210 (without country code)', type: 'text' },
+      { key: 'country_code', label: 'Country Code',       placeholder: 'IN', type: 'text' },
+      { key: 'auth_token',   label: 'Auth Token (optional)', placeholder: 'Overrides TRUECALLER_AUTH_TOKEN env var', type: 'password' },
+    ],
+    task: 'osint_truecaller',
+    queue: 'RED',
+  },
+  {
+    id: 'wifite',
+    name: 'WiFite',
+    version: '2.7.0',
+    icon: '📶',
+    category: 'Wireless',
+    color: '#f59e0b',
+    desc: 'Automated Wi-Fi auditing — WPS brute-force, WPA/WPA2 handshake capture, PMKID attacks, Evil Twin',
+    status: 'ready',
+    fields: [
+      { key: 'interface', label: 'Wireless Interface', placeholder: 'wlan0  or  wlan0mon', type: 'text' },
+      { key: 'attack',    label: 'Attack Mode',        type: 'select',
+        options: ['wps','wpa','pmkid','all','evil-twin'] },
+      { key: 'bssid',     label: 'Target BSSID (optional)', placeholder: 'AA:BB:CC:DD:EE:FF', type: 'text' },
+      { key: 'channel',   label: 'Channel (optional)', placeholder: '1-14  or  leave blank for all', type: 'text' },
+    ],
+    task: 'run_wifite',
+    queue: 'RED',
+  },
+  {
+    id: 'maltego',
+    name: 'Maltego',
+    version: '4.6',
+    icon: '🕵️',
+    category: 'OSINT',
+    color: '#8b5cf6',
+    desc: 'Visual link analysis & OSINT graph intelligence — map relationships between people, domains, IPs, orgs',
+    status: 'external',
+    fields: [
+      { key: 'target',      label: 'Seed Entity',    placeholder: 'domain.com  or  person@email.com  or  8.8.8.8', type: 'text' },
+      { key: 'entity_type', label: 'Entity Type',    type: 'select',
+        options: ['domain','ip','email','person','organisation','phone','hash'] },
+      { key: 'transforms',  label: 'Transform Set',  type: 'select',
+        options: ['all','dns','whois','social','threat_intel','shodan','haveibeenpwned'] },
+    ],
+    task: 'maltego_pivot',
+    queue: 'RED',
+  },
+  {
+    id: 'godseye',
+    name: 'GodsEYE',
+    version: '2024',
+    icon: '👁️',
+    category: 'Global Intel',
+    color: '#06b6d4',
+    desc: 'AI-Powered Global Intelligence Platform — live flight tracking, CCTV, maritime, earthquakes, news, undersea cables & more',
+    status: 'external',
+    fields: [
+      { key: 'layers', label: 'Active Layers', placeholder: 'maritime,cctv,live_news,earthquakes', type: 'text' },
+      { key: 'region', label: 'Region Focus (optional)', placeholder: 'e.g. South Asia  or  leave blank for global', type: 'text' },
+    ],
+    task: 'godseye_open',
+    queue: 'RED',
+  },
+  {
+    id: 'zingela',
+    name: 'Zingela',
+    version: '1.2.0',
+    icon: '🎯',
+    category: 'Network',
+    color: '#00e5ff',
+    desc: 'Stateless mass TCP/UDP port scanner in Zig — line-rate SYN scanning with SipHash & AF_XDP',
+    status: 'ready',
+    fields: [
+      { key: 'target',    label: 'Target Range / CIDR', placeholder: '192.168.1.0/24  or  10.0.0.0/16', type: 'text' },
+      { key: 'ports',     label: 'Ports',               placeholder: '1-1024  or  80,443,22,8080,3389', type: 'text' },
+      { key: 'rate',      label: 'Packets / sec (pps)', placeholder: '10000', type: 'text' },
+      { key: 'scan_mode', label: 'Scan Mode',           type: 'select', options: ['syn', 'udp', 'ack', 'fin'] },
+      { key: 'interface', label: 'Interface (optional)', placeholder: 'eth0 or leave blank', type: 'text' },
+    ],
+    task: 'run_zingela_scan',
+    queue: 'RED',
+  },
+  {
+    id: 'lisdex',
+    name: 'LISDEX',
+    version: '2.1.0',
+    icon: '🐧',
+    category: 'Endpoint Audit',
+    color: '#38bdf8',
+    desc: 'Linux System & Security Indexer — privilege escalation vectors, SUID/GUID enumeration, kernel vulnerabilities, and configuration audit',
+    status: 'ready',
+    fields: [
+      { key: 'target',      label: 'Target Host / SSH',  placeholder: 'localhost  or  192.168.1.45', type: 'text' },
+      { key: 'audit_level', label: 'Audit Profile',      type: 'select', options: ['deep', 'quick', 'standard', 'privesc', 'cve'] },
+      { key: 'modules',     label: 'Checks to Run',      placeholder: 'suid,capabilities,cron,kernel_cves,sudoers,containers', type: 'text' },
+    ],
+    task: 'run_lisdex_audit',
+    queue: 'BLUE',
+  },
+  {
+    id: 'cre',
+    name: 'OpenCRE',
+    version: '1.4.0',
+    icon: '📚',
+    category: 'Governance',
+    color: '#c084fc',
+    desc: 'OWASP Open Common Requirement Enumeration — cross-framework mapping for NIST 800-53, ISO 27001, ASVS, and CWE',
+    status: 'ready',
+    fields: [
+      { key: 'query',      label: 'Search Requirement / CRE ID', placeholder: 'Authentication  or  074-651  or  CWE-79', type: 'text' },
+      { key: 'framework',  label: 'Target Framework',            type: 'select', options: ['All Frameworks', 'NIST SP 800-53', 'ISO/IEC 27001', 'OWASP ASVS', 'OWASP Top 10', 'CWE'] },
+    ],
+    task: 'run_cre_lookup',
+    queue: 'PURPLE',
+  },
+  {
+    id: 'fwrule',
+    name: 'FWRule',
+    version: '1.8.0',
+    icon: '🛡️',
+    category: 'Hardening',
+    color: '#10b981',
+    desc: 'Automated Firewall Rule Synthesizer & Policy Enforcement — generate, analyze, and deploy iptables, nftables, UFW, pf, and cloud security rules',
+    status: 'ready',
+    fields: [
+      { key: 'target',   label: 'Target IP / Subnet', placeholder: '192.168.1.100  or  10.0.0.0/24', type: 'text' },
+      { key: 'engine',   label: 'Firewall Engine',    type: 'select', options: ['iptables', 'nftables', 'ufw', 'pf', 'aws_security_group', 'cisco_acl'] },
+      { key: 'action',   label: 'Enforcement Action', type: 'select', options: ['block_ip', 'rate_limit_ddos', 'isolate_host', 'allow_service'] },
+      { key: 'port',     label: 'Port / Service',     placeholder: 'any  or  443, 80, 22', type: 'text' },
+      { key: 'protocol', label: 'Protocol',           type: 'select', options: ['tcp', 'udp', 'all'] },
+    ],
+    task: 'run_fwrule_enforce',
+    queue: 'BLUE',
+  },
+  {
+    id: 'httpheader',
+    name: 'HTTP Header Inspector',
+    version: '1.0.0',
+    icon: '🔒',
+    category: 'Web',
+    color: '#a855f7',
+    desc: 'HTTPS Security Header Inspector — checks HSTS, CSP, X-Content-Type-Options (nosniff), and framing restrictions with optional AI defensive advisory.',
+    status: 'ready',
+    fields: [
+      { key: 'target',   label: 'Target Hostname', placeholder: 'example.com  or  target.org', type: 'text' },
+      { key: 'interval', label: 'Request Interval (sec)', placeholder: '1.0', type: 'text' },
+      { key: 'ai',       label: 'AI Advisory (OpenAI)', type: 'select', options: ['no', 'yes'] },
+    ],
+    task: 'run_httpheader_scan',
+    queue: 'RED',
+  },
 ]
+
 
 const CAT_COLORS: Record<string, string> = {
   Network: 'var(--color-cyan)',
@@ -190,6 +383,13 @@ const CAT_COLORS: Record<string, string> = {
   SIEM: 'var(--color-blue)',
   Malware: 'var(--color-critical)',
   Packet: 'var(--color-cyan)',
+  OSINT: '#e11d48',
+  'Threat Intel': 'var(--color-blue)',
+  Wireless: '#f59e0b',
+  'Endpoint Audit': '#38bdf8',
+  Governance: '#c084fc',
+  Hardening: '#10b981',
+  'Global Intel': '#06b6d4',
 }
 
 const STATUS_LABELS: Record<string, { label: string; color: string }> = {
@@ -211,6 +411,8 @@ export default function ToolsPanel({ open, onClose }: ToolsPanelProps) {
   const [search, setSearch] = useState('')
   const [catFilter, setCatFilter] = useState('All')
   const [runningTools, setRunningTools] = useState<Set<string>>(new Set())
+  const [toolResults, setToolResults] = useState<Record<string, any>>({})
+  const [resultTab, setResultTab] = useState<'result' | 'report' | 'analysis'>('result')
   const panelRef = useRef<HTMLDivElement>(null)
 
   // Close on backdrop click
@@ -240,28 +442,45 @@ export default function ToolsPanel({ open, onClose }: ToolsPanelProps) {
 
   const launchTool = async (tool: typeof TOOLS[0]) => {
     if (tool.status === 'disabled') { toast.error(`${tool.name} is not configured`); return }
-    if (tool.status === 'external') { toast(`Open ${tool.name} externally and configure proxy settings`, { icon: 'ℹ️' }); return }
 
     setRunningTools(prev => new Set(prev).add(tool.id))
-    toast.loading(`Launching ${tool.name}...`, { id: tool.id })
+    // clear old results for this tool
+    setToolResults(prev => { const n = { ...prev }; delete n[tool.id]; return n })
+    setResultTab('result')
+    toast.loading(`Running ${tool.name}...`, { id: tool.id })
+
+    const fields = formData[tool.id] || {}
+
+    // GodsEYE — open in browser tab
+    if (tool.id === 'godseye') {
+      const layers = fields.layers || 'maritime,cctv,live_news,earthquakes,global_incidents,day_night,cables'
+      window.open(`https://godseye.network/dashboard?layers=${encodeURIComponent(layers)}`, '_blank', 'noopener')
+      toast.success('GodsEYE opened in new tab', { id: tool.id })
+      setRunningTools(prev => { const s = new Set(prev); s.delete(tool.id); return s })
+      return
+    }
+
+    const targets = fields.target ? [fields.target]
+      : fields.phone ? [fields.phone]
+      : fields.query ? [fields.query]
+      : []
 
     try {
-      const fields = formData[tool.id] || {}
-      const targets = fields.target ? [fields.target] : []
-      await api.post('/scans', {
-        name: `${tool.name} — ${targets[0] || 'default'}`,
-        mode: tool.queue,
-        plugin: tool.id,
-        targets,
-        options: fields,
-      })
-      toast.success(`${tool.name} launched!`, { id: tool.id })
-    } catch {
-      toast.success(`${tool.name} queued (demo mode)`, { id: tool.id })
+      const resp = await toolApi.run(tool.id, targets, fields)
+      setToolResults(prev => ({ ...prev, [tool.id]: resp }))
+      const msg = resp.mock ? `${tool.name} completed (demo data)` : `${tool.name} completed in ${resp.elapsed_ms}ms`
+      toast.success(msg, { id: tool.id })
+    } catch (err: any) {
+      // Backend not running — show helpful mock
+      const mockResp = {
+        plugin: tool.id, success: true, elapsed_ms: 0, mock: true,
+        result: { status: 'Backend offline — start backend to get real results', demo: true },
+        report: `${tool.name} — backend not reachable\nStart the backend: cd backend && uvicorn app.main:app --reload --port 8001`,
+      }
+      setToolResults(prev => ({ ...prev, [tool.id]: mockResp }))
+      toast.success(`${tool.name} ran (demo mode)`, { id: tool.id })
     } finally {
-      setTimeout(() => {
-        setRunningTools(prev => { const s = new Set(prev); s.delete(tool.id); return s })
-      }, 3000)
+      setRunningTools(prev => { const s = new Set(prev); s.delete(tool.id); return s })
     }
   }
 
@@ -559,6 +778,308 @@ export default function ToolsPanel({ open, onClose }: ToolsPanelProps) {
                   </div>
                 )}
 
+                {/* OSINT tool setup notes */}
+                {['shodan', 'virustotal', 'truecaller'].includes(activeTool_.id) && (
+                  <div style={{
+                    marginTop: 'var(--space-5)', padding: 'var(--space-4)',
+                    background: `${activeTool_.color}0a`,
+                    border: `1px solid ${activeTool_.color}33`,
+                    borderRadius: 'var(--radius-md)',
+                  }}>
+                    <div style={{ fontWeight: 700, color: activeTool_.color, marginBottom: 8, fontSize: '0.8rem' }}>
+                      API Setup
+                    </div>
+                    <div style={{ fontSize: '0.8rem', color: 'var(--color-text-secondary)', lineHeight: 1.7 }}>
+                      {activeTool_.id === 'shodan' && (
+                        <>
+                          1. Sign up at <strong>shodan.io</strong><br />
+                          2. Copy API key from account.shodan.io<br />
+                          3. Set <code>SHODAN_API_KEY</code> in your <code>.env</code><br />
+                          4. Or paste the key directly in the field above
+                        </>
+                      )}
+                      {activeTool_.id === 'virustotal' && (
+                        <>
+                          1. Sign up at <strong>virustotal.com</strong><br />
+                          2. Go to Profile → API Key<br />
+                          3. Set <code>VIRUSTOTAL_API_KEY</code> in your <code>.env</code><br />
+                          4. Or paste the key directly in the field above
+                        </>
+                      )}
+                      {activeTool_.id === 'truecaller' && (
+                        <>
+                          1. Install: <code>pip install truecallerpy</code><br />
+                          2. Run: <code>python -m truecallerpy login</code><br />
+                          3. Set <code>TRUECALLER_AUTH_TOKEN</code> in your <code>.env</code><br />
+                          4. Or paste the token directly in the field above
+                        </>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {/* GodsEYE live dashboard embed */}
+                {activeTool_.id === 'godseye' && (
+                  <div style={{ marginTop: 'var(--space-5)' }}>
+                    <div style={{ fontSize: '0.7rem', fontWeight: 700, color: 'var(--color-text-muted)', letterSpacing: '0.1em', textTransform: 'uppercase', marginBottom: 'var(--space-3)' }}>
+                      Live Dashboard Preview
+                    </div>
+                    <div style={{
+                      borderRadius: 'var(--radius-md)', overflow: 'hidden',
+                      border: `1px solid ${activeTool_.color}44`,
+                      boxShadow: `0 0 24px ${activeTool_.color}22`,
+                    }}>
+                      <iframe
+                        src="https://godseye.network/dashboard?layers=maritime,cctv,live_news,news_intel,earthquakes,global_incidents,day_night,cables,sdk_sea,sdk_air,sdk_naval"
+                        style={{ width: '100%', height: 280, border: 'none', display: 'block' }}
+                        title="GodsEYE Global Intelligence"
+                        sandbox="allow-scripts allow-same-origin allow-popups"
+                      />
+                    </div>
+                    <div style={{ fontSize: '0.7rem', color: 'var(--color-text-muted)', marginTop: 6 }}>
+                      Click Launch to open full dashboard in a new tab with all layers active.
+                    </div>
+                  </div>
+                )}
+
+                {/* Maltego setup */}
+                {activeTool_.id === 'maltego' && (
+                  <div style={{
+                    marginTop: 'var(--space-5)', padding: 'var(--space-4)',
+                    background: `${activeTool_.color}0a`,
+                    border: `1px solid ${activeTool_.color}33`,
+                    borderRadius: 'var(--radius-md)',
+                  }}>
+                    <div style={{ fontWeight: 700, color: activeTool_.color, marginBottom: 8, fontSize: '0.8rem' }}>
+                      Maltego Setup
+                    </div>
+                    <div style={{ fontSize: '0.8rem', color: 'var(--color-text-secondary)', lineHeight: 1.7 }}>
+                      1. Download Maltego from <strong>maltego.com</strong><br />
+                      2. Create a free Community Edition account<br />
+                      3. Install transform hub packs (OSINT, Shodan, etc.)<br />
+                      4. Launch → New Graph → add seed entity above<br />
+                      5. Run All Transforms to map the intelligence graph
+                    </div>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5, marginTop: 10 }}>
+                      {['Shodan','HaveIBeenPwned','VirusTotal','DomainTools','PassiveTotal','WhoisXML'].map(t => (
+                        <span key={t} style={{
+                          padding: '2px 8px', borderRadius: 'var(--radius-sm)',
+                          border: `1px solid ${activeTool_.color}44`,
+                          color: activeTool_.color, fontSize: '0.65rem', fontWeight: 700,
+                        }}>{t}</span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* WiFite attack profiles */}
+                {activeTool_.id === 'wifite' && (
+                  <div style={{ marginTop: 'var(--space-5)' }}>
+                    <div style={{ fontSize: '0.7rem', fontWeight: 700, color: 'var(--color-text-muted)', letterSpacing: '0.1em', textTransform: 'uppercase', marginBottom: 'var(--space-3)' }}>
+                      Attack Profiles
+                    </div>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>
+                      {[
+                        { label: '📡 WPS PIN',    type: 'wps',        desc: 'WPS brute-force' },
+                        { label: '🤝 WPA Handshake', type: 'wpa',     desc: 'Capture & crack' },
+                        { label: '🔑 PMKID',      type: 'pmkid',      desc: 'Clientless attack' },
+                        { label: '👹 Evil Twin',   type: 'evil-twin',  desc: 'Rogue AP + deauth' },
+                      ].map(p => (
+                        <button
+                          key={p.type}
+                          onClick={() => setField(activeTool_.id, 'attack', p.type)}
+                          style={{
+                            padding: 'var(--space-2) var(--space-3)',
+                            borderRadius: 'var(--radius-md)',
+                            border: `1px solid ${formData[activeTool_.id]?.attack === p.type ? activeTool_.color : 'var(--color-border)'}`,
+                            background: formData[activeTool_.id]?.attack === p.type ? `${activeTool_.color}18` : 'var(--color-bg-elevated)',
+                            cursor: 'pointer', textAlign: 'left', transition: 'all 0.15s',
+                          }}
+                        >
+                          <div style={{ fontSize: '0.75rem', fontWeight: 700 }}>{p.label}</div>
+                          <div style={{ fontSize: '0.65rem', color: 'var(--color-text-muted)' }}>{p.desc}</div>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Zingela Line-rate Presets */}
+                {activeTool_.id === 'zingela' && (
+                  <div style={{ marginTop: 'var(--space-5)' }}>
+                    <div style={{ fontSize: '0.7rem', fontWeight: 700, color: 'var(--color-text-muted)', letterSpacing: '0.1em', textTransform: 'uppercase', marginBottom: 'var(--space-3)' }}>
+                      Line-Rate Probe Rates (Packets / Second)
+                    </div>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>
+                      {[
+                        { label: '🚀 10,000 pps', rate: '10000', desc: 'Standard subnet scan' },
+                        { label: '⚡ 50,000 pps', rate: '50000', desc: 'Campus CIDR /16' },
+                        { label: '🔥 100,000 pps', rate: '100000', desc: 'Line-rate stateless' },
+                        { label: '🌌 1,000,000 pps', rate: '1000000', desc: '10GbE Mass throughput' },
+                      ].map(p => (
+                        <button
+                          key={p.rate}
+                          onClick={() => setField(activeTool_.id, 'rate', p.rate)}
+                          style={{
+                            padding: 'var(--space-2) var(--space-3)',
+                            borderRadius: 'var(--radius-md)',
+                            border: `1px solid ${formData[activeTool_.id]?.rate === p.rate ? activeTool_.color : 'var(--color-border)'}`,
+                            background: formData[activeTool_.id]?.rate === p.rate ? `${activeTool_.color}18` : 'var(--color-bg-elevated)',
+                            cursor: 'pointer', textAlign: 'left', transition: 'all 0.15s',
+                          }}
+                        >
+                          <div style={{ fontSize: '0.75rem', fontWeight: 700 }}>{p.label}</div>
+                          <div style={{ fontSize: '0.65rem', color: 'var(--color-text-muted)' }}>{p.desc}</div>
+                        </button>
+                      ))}
+                    </div>
+                    <div style={{
+                      marginTop: 'var(--space-3)', padding: 'var(--space-3)',
+                      background: 'rgba(0, 229, 255, 0.05)',
+                      border: '1px solid rgba(0, 229, 255, 0.2)',
+                      borderRadius: 'var(--radius-md)',
+                      fontSize: '0.7rem', color: 'var(--color-text-secondary)',
+                    }}>
+                      💡 <strong>Zig Engine:</strong> Uses stateless SYN scanning with SipHash-2-4 cookies and <code>AF_PACKET / AF_XDP</code> direct kernel bypass for high line-rate speeds.
+                    </div>
+                  </div>
+                )}
+
+                {/* LISDEX Linux Audit Profiles */}
+                {activeTool_.id === 'lisdex' && (
+                  <div style={{ marginTop: 'var(--space-5)' }}>
+                    <div style={{ fontSize: '0.7rem', fontWeight: 700, color: 'var(--color-text-muted)', letterSpacing: '0.1em', textTransform: 'uppercase', marginBottom: 'var(--space-3)' }}>
+                      Linux Audit Profiles
+                    </div>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>
+                      {[
+                        { label: '👑 PrivEsc Vectors', level: 'privesc', desc: 'SUID, sudoers, capabilities' },
+                        { label: '🐛 Kernel CVEs',     level: 'cve',     desc: 'Dirty COW, PwnKit, Looney' },
+                        { label: '🔍 Deep Inspection', level: 'deep',    desc: 'All 6 security indexers' },
+                        { label: '⚡ Quick Audit',     level: 'quick',   desc: 'Critical exposure sweep' },
+                      ].map(p => (
+                        <button
+                          key={p.level}
+                          onClick={() => setField(activeTool_.id, 'audit_level', p.level)}
+                          style={{
+                            padding: 'var(--space-2) var(--space-3)',
+                            borderRadius: 'var(--radius-md)',
+                            border: `1px solid ${formData[activeTool_.id]?.audit_level === p.level ? activeTool_.color : 'var(--color-border)'}`,
+                            background: formData[activeTool_.id]?.audit_level === p.level ? `${activeTool_.color}18` : 'var(--color-bg-elevated)',
+                            cursor: 'pointer', textAlign: 'left', transition: 'all 0.15s',
+                          }}
+                        >
+                          <div style={{ fontSize: '0.75rem', fontWeight: 700 }}>{p.label}</div>
+                          <div style={{ fontSize: '0.65rem', color: 'var(--color-text-muted)' }}>{p.desc}</div>
+                        </button>
+                      ))}
+                    </div>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5, marginTop: 'var(--space-3)' }}>
+                      {['SUID Binaries', 'Linux Capabilities', 'Docker Escape Check', 'Cron Wildcards', 'Kernel CVE Matcher'].map(t => (
+                        <span key={t} style={{
+                          padding: '2px 8px', borderRadius: 'var(--radius-sm)',
+                          border: `1px solid ${activeTool_.color}44`,
+                          color: activeTool_.color, fontSize: '0.65rem', fontWeight: 700,
+                        }}>{t}</span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* OpenCRE Standards Search Presets */}
+                {activeTool_.id === 'cre' && (
+                  <div style={{ marginTop: 'var(--space-5)' }}>
+                    <div style={{ fontSize: '0.7rem', fontWeight: 700, color: 'var(--color-text-muted)', letterSpacing: '0.1em', textTransform: 'uppercase', marginBottom: 'var(--space-3)' }}>
+                      Standards Quick Queries
+                    </div>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                      {[
+                        { label: '🔐 Authentication', q: 'Authentication' },
+                        { label: '🔑 Cryptographic Keys', q: 'Cryptographic keys' },
+                        { label: '🛡️ Input Validation', q: 'Input validation' },
+                        { label: '⚖️ Least Privilege', q: 'Least privilege' },
+                        { label: '📝 Audit & Logging', q: 'Log and monitor' },
+                        { label: '📦 Supply Chain SBOM', q: 'Supply chain' },
+                      ].map(pill => (
+                        <button
+                          key={pill.q}
+                          onClick={() => setField(activeTool_.id, 'query', pill.q)}
+                          style={{
+                            padding: '4px 10px', borderRadius: 'var(--radius-full)',
+                            border: `1px solid ${formData[activeTool_.id]?.query === pill.q ? activeTool_.color : 'var(--color-border)'}`,
+                            background: formData[activeTool_.id]?.query === pill.q ? `${activeTool_.color}22` : 'var(--color-bg-elevated)',
+                            color: formData[activeTool_.id]?.query === pill.q ? activeTool_.color : 'var(--color-text-primary)',
+                            fontSize: '0.7rem', fontWeight: 600, cursor: 'pointer',
+                          }}
+                        >
+                          {pill.label}
+                        </button>
+                      ))}
+                    </div>
+                    <div style={{
+                      marginTop: 'var(--space-3)', padding: 'var(--space-3)',
+                      background: 'rgba(192, 132, 252, 0.05)',
+                      border: '1px solid rgba(192, 132, 252, 0.2)',
+                      borderRadius: 'var(--radius-md)',
+                      fontSize: '0.7rem', color: 'var(--color-text-secondary)',
+                    }}>
+                      Maps controls directly across <strong>NIST SP 800-53</strong>, <strong>ISO/IEC 27001</strong>, <strong>OWASP ASVS</strong>, <strong>OWASP Top 10</strong>, and <strong>CWE / CAPEC</strong>.
+                    </div>
+                  </div>
+                )}
+
+                {/* FWRule Firewall Enforcement Presets */}
+                {activeTool_.id === 'fwrule' && (
+                  <div style={{ marginTop: 'var(--space-5)' }}>
+                    <div style={{ fontSize: '0.7rem', fontWeight: 700, color: 'var(--color-text-muted)', letterSpacing: '0.1em', textTransform: 'uppercase', marginBottom: 'var(--space-3)' }}>
+                      Defensive Enforcement Actions
+                    </div>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>
+                      {[
+                        { label: '🚫 Block Threat IP', action: 'block_ip', desc: 'DROP / deny all ingress traffic' },
+                        { label: '⚡ Rate-Limit DDoS', action: 'rate_limit_ddos', desc: 'Mitigate volumetric floods' },
+                        { label: '🔒 Isolate Host', action: 'isolate_host', desc: 'Quarantine compromised server' },
+                        { label: '✅ Allow Service', action: 'allow_service', desc: 'Permit secure port' },
+                      ].map(a => (
+                        <button
+                          key={a.action}
+                          onClick={() => setField(activeTool_.id, 'action', a.action)}
+                          style={{
+                            padding: 'var(--space-2) var(--space-3)',
+                            borderRadius: 'var(--radius-md)',
+                            border: `1px solid ${formData[activeTool_.id]?.action === a.action ? activeTool_.color : 'var(--color-border)'}`,
+                            background: formData[activeTool_.id]?.action === a.action ? `${activeTool_.color}18` : 'var(--color-bg-elevated)',
+                            cursor: 'pointer', textAlign: 'left', transition: 'all 0.15s',
+                          }}
+                        >
+                          <div style={{ fontSize: '0.75rem', fontWeight: 700 }}>{a.label}</div>
+                          <div style={{ fontSize: '0.65rem', color: 'var(--color-text-muted)' }}>{a.desc}</div>
+                        </button>
+                      ))}
+                    </div>
+                    <div style={{ marginTop: 'var(--space-3)' }}>
+                      <div style={{ fontSize: '0.68rem', color: 'var(--color-text-muted)', marginBottom: 4 }}>Target Architecture:</div>
+                      <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap' }}>
+                        {['iptables', 'nftables', 'ufw', 'pf', 'aws_security_group'].map(eng => (
+                          <button
+                            key={eng}
+                            onClick={() => setField(activeTool_.id, 'engine', eng)}
+                            style={{
+                              padding: '2px 8px', borderRadius: 'var(--radius-sm)',
+                              border: `1px solid ${formData[activeTool_.id]?.engine === eng ? activeTool_.color : 'var(--color-border)'}`,
+                              background: formData[activeTool_.id]?.engine === eng ? `${activeTool_.color}22` : 'transparent',
+                              color: formData[activeTool_.id]?.engine === eng ? activeTool_.color : 'var(--color-text-muted)',
+                              fontSize: '0.65rem', fontWeight: 700, cursor: 'pointer',
+                            }}
+                          >
+                            {eng}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                )}
+
                 {/* Quick options */}
                 {activeTool_.id === 'nmap' && (
                   <div style={{ marginTop: 'var(--space-5)' }}>
@@ -606,6 +1127,46 @@ export default function ToolsPanel({ open, onClose }: ToolsPanelProps) {
                 )}
               </div>
 
+              {/* ── Results Viewer ── */}
+              {toolResults[activeTool_.id] && (
+                <div style={{
+                  borderTop: '2px solid ' + activeTool_.color + '44',
+                  flexShrink: 0, maxHeight: 360,
+                  display: 'flex', flexDirection: 'column',
+                  background: 'var(--color-bg)',
+                }}>
+                  <div style={{ display: 'flex', borderBottom: '1px solid var(--color-border)', flexShrink: 0 }}>
+                    {(['result', 'report', 'analysis'] as const).map(tab => {
+                      const res = toolResults[activeTool_.id]
+                      if (tab === 'report' && !res?.report) return null
+                      if (tab === 'analysis' && !res?.analysis) return null
+                      return (
+                        <button key={tab} onClick={() => setResultTab(tab)} style={{
+                          padding: '8px 14px', background: resultTab === tab ? activeTool_.color + '18' : 'transparent',
+                          border: 'none', borderBottom: resultTab === tab ? '2px solid ' + activeTool_.color : '2px solid transparent',
+                          color: resultTab === tab ? activeTool_.color : 'var(--color-text-muted)',
+                          fontSize: '0.68rem', fontWeight: 700, cursor: 'pointer', letterSpacing: '0.08em', textTransform: 'uppercase',
+                        }}>{tab}</button>
+                      )
+                    })}
+                    <div style={{ flex: 1 }} />
+                    <div style={{ padding: '6px 12px', fontSize: '0.65rem', color: 'var(--color-text-muted)', display: 'flex', alignItems: 'center', gap: 6 }}>
+                      {toolResults[activeTool_.id].mock && <span style={{ color: '#f59e0b', fontWeight: 700 }}>DEMO</span>}
+                      <span style={{ fontFamily: 'var(--font-mono)' }}>{toolResults[activeTool_.id].elapsed_ms}ms</span>
+                    </div>
+                  </div>
+                  <div style={{ flex: 1, overflowY: 'auto', padding: 'var(--space-3)' }}>
+                    {resultTab === 'result' && <ResultView data={toolResults[activeTool_.id].result} color={activeTool_.color} />}
+                    {resultTab === 'report' && (
+                      <pre style={{ fontFamily: 'var(--font-mono)', fontSize: '0.72rem', color: activeTool_.color, lineHeight: 1.6, whiteSpace: 'pre-wrap', margin: 0 }}>
+                        {toolResults[activeTool_.id].report}
+                      </pre>
+                    )}
+                    {resultTab === 'analysis' && <ResultView data={toolResults[activeTool_.id].analysis} color={activeTool_.color} />}
+                  </div>
+                </div>
+              )}
+
               {/* Launch button */}
               <div style={{
                 padding: 'var(--space-4) var(--space-5)',
@@ -620,43 +1181,36 @@ export default function ToolsPanel({ open, onClose }: ToolsPanelProps) {
                 ) : (
                   <>
                     <div style={{
-                  marginBottom: 'var(--space-3)',
-                  padding: 'var(--space-2) var(--space-3)',
-                  background: 'rgba(255,59,92,0.06)',
-                  border: '1px solid rgba(255,59,92,0.2)',
-                  borderRadius: 'var(--radius-md)',
-                  fontSize: '0.73rem',
-                  color: 'var(--color-red)',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 6,
-                }}>
-                  <span>⚠️</span>
-                  <span>Only scan systems you are authorised to test. Ensure a valid scope and authorization document exists.</span>
-                </div>
-
-                <div style={{ display: 'flex', gap: 'var(--space-3)' }}>
-                    <button
-                      className="btn btn-primary"
-                      style={{
-                        flex: 1,
-                        background: `linear-gradient(135deg, ${activeTool_.color}, ${activeTool_.color}cc)`,
-                        color: '#000',
-                        fontWeight: 700,
-                        boxShadow: `0 4px 20px ${activeTool_.color}44`,
-                      }}
-                      onClick={() => launchTool(activeTool_)}
-                      disabled={runningTools.has(activeTool_.id)}
-                    >
-                      {runningTools.has(activeTool_.id)
-                        ? `⏳ ${activeTool_.name} running...`
-                        : `🚀 Launch ${activeTool_.name}`}
-                    </button>
-                    <button className="btn btn-ghost" onClick={() => setActiveTool(null)}>
-                      Docs
-                    </button>
-                  </div>
-                </>
+                      marginBottom: 'var(--space-3)', padding: 'var(--space-2) var(--space-3)',
+                      background: 'rgba(255,59,92,0.06)', border: '1px solid rgba(255,59,92,0.2)',
+                      borderRadius: 'var(--radius-md)', fontSize: '0.73rem', color: 'var(--color-red)',
+                      display: 'flex', alignItems: 'center', gap: 6,
+                    }}>
+                      <span>⚠️</span>
+                      <span>Only scan systems you are authorised to test.</span>
+                    </div>
+                    <div style={{ display: 'flex', gap: 'var(--space-3)' }}>
+                      <button
+                        className="btn btn-primary"
+                        style={{
+                          flex: 1,
+                          background: `linear-gradient(135deg, ${activeTool_.color}, ${activeTool_.color}cc)`,
+                          color: '#000', fontWeight: 700,
+                          boxShadow: `0 4px 20px ${activeTool_.color}44`,
+                        }}
+                        onClick={() => launchTool(activeTool_)}
+                        disabled={runningTools.has(activeTool_.id)}
+                      >
+                        {runningTools.has(activeTool_.id) ? `⏳ Running ${activeTool_.name}…` : `🚀 Run ${activeTool_.name}`}
+                      </button>
+                      {toolResults[activeTool_.id] && (
+                        <button className="btn btn-ghost"
+                          onClick={() => setToolResults(prev => { const n = { ...prev }; delete n[activeTool_.id]; return n })}>
+                          ✕ Clear
+                        </button>
+                      )}
+                    </div>
+                  </>
                 )}
               </div>
             </div>
@@ -664,5 +1218,69 @@ export default function ToolsPanel({ open, onClose }: ToolsPanelProps) {
         </div>
       </div>
     </>
+  )
+}
+
+// ── ResultView ────────────────────────────────────────────────────────────────
+function ResultView({ data, color }: { data: any; color: string }) {
+  if (!data) return <div style={{ color: 'var(--color-text-muted)', fontSize: '0.8rem' }}>No data</div>
+  if (Array.isArray(data)) {
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+        {data.map((item, i) => (
+          <div key={i} style={{
+            padding: '6px 10px', background: color + '0a', border: '1px solid ' + color + '22',
+            borderRadius: 6, fontFamily: 'var(--font-mono)', fontSize: '0.7rem', color: 'var(--color-text-primary)',
+          }}>
+            {typeof item === 'object' ? JSON.stringify(item, null, 2) : String(item)}
+          </div>
+        ))}
+      </div>
+    )
+  }
+  if (typeof data !== 'object') {
+    return <pre style={{ fontFamily: 'var(--font-mono)', fontSize: '0.75rem', color: 'var(--color-text-primary)', whiteSpace: 'pre-wrap' }}>{String(data)}</pre>
+  }
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+      {Object.entries(data).map(([key, val]) => {
+        const isArr = Array.isArray(val)
+        const isObj = val && typeof val === 'object' && !isArr
+        return (
+          <div key={key} style={{
+            background: color + '08', border: '1px solid ' + color + '20',
+            borderRadius: 6, padding: '8px 12px',
+          }}>
+            <div style={{ fontSize: '0.6rem', fontWeight: 700, color, letterSpacing: '0.1em', textTransform: 'uppercase', marginBottom: 4 }}>
+              {key.replace(/_/g, ' ')}
+            </div>
+            {isArr ? (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+                {(val as any[]).slice(0, 6).map((item, i) => (
+                  <div key={i} style={{
+                    fontFamily: 'var(--font-mono)', fontSize: '0.68rem',
+                    color: 'var(--color-text-primary)', background: 'rgba(0,0,0,0.2)',
+                    borderRadius: 4, padding: '2px 6px', lineHeight: 1.5,
+                  }}>
+                    {typeof item === 'object' ? JSON.stringify(item) : String(item)}
+                  </div>
+                ))}
+                {(val as any[]).length > 6 && (
+                  <div style={{ fontSize: '0.65rem', color: 'var(--color-text-muted)' }}>+{(val as any[]).length - 6} more…</div>
+                )}
+              </div>
+            ) : isObj ? (
+              <div style={{ fontFamily: 'var(--font-mono)', fontSize: '0.7rem', color: 'var(--color-text-secondary)', whiteSpace: 'pre-wrap', lineHeight: 1.5 }}>
+                {JSON.stringify(val, null, 2)}
+              </div>
+            ) : (
+              <div style={{ fontFamily: 'var(--font-mono)', fontSize: '0.75rem', color: 'var(--color-text-primary)', lineHeight: 1.5 }}>
+                {String(val ?? '')}
+              </div>
+            )}
+          </div>
+        )
+      })}
+    </div>
   )
 }

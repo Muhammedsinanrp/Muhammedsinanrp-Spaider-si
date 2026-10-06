@@ -1,0 +1,1 @@
+"""SPAIDER OpenCRE Plugin."""

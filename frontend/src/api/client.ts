@@ -1,6 +1,6 @@
 import axios from 'axios'
 
-const BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8001'
+const BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
 
 export const api = axios.create({
   baseURL: `${BASE_URL}/api/v1`,
@@ -106,4 +106,30 @@ export const authApi = {
   },
   register: (data: any) => api.post('/auth/register', data).then(r => r.data),
   me: () => api.get('/auth/me').then(r => r.data),
+}
+
+// ── Targets & Scopes ──────────────────────────────────────────────────────────
+export const targetApi = {
+  list: () => api.get('/targets').then(r => r.data),
+  create: (data: any) => api.post('/targets', data).then(r => r.data),
+  delete: (id: string) => api.delete(`/targets/${id}`).then(r => r.data),
+  summary: (id: string) => api.get(`/targets/${id}/summary`).then(r => r.data),
+  scopes: (id: string) => api.get(`/targets/${id}/scopes`).then(r => r.data),
+  addScope: (id: string, data: any) => api.post(`/targets/${id}/scopes`, data).then(r => r.data),
+}
+
+// ── Scan Events & Experiment Metrics ─────────────────────────────────────────
+export const experimentApi = {
+  metrics: () => api.get('/scans/experiment/metrics').then(r => r.data),
+  scanEvents: (scanId: string) => api.get(`/scans/${scanId}/events`).then(r => r.data),
+  generateScanReport: (scanId: string, type = 'technical') =>
+    api.post(`/reports/scan/${scanId}/generate?report_type=${type}`).then(r => r.data),
+  reportMarkdown: (reportId: string) =>
+    api.get(`/reports/${reportId}/markdown`).then(r => r.data),
+}
+
+// ── Direct tool execution (synchronous, returns full results) ────────────────
+export const toolApi = {
+  run: (plugin: string, targets: string[], options: Record<string, any>) =>
+    api.post('/tools/run', { plugin, targets, options }).then(r => r.data),
 }

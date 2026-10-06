@@ -194,6 +194,40 @@ services:
       - backend
       - frontend
 
+  # ─────────────────────────────────────────
+  #  VULNERABLE LAB TARGETS (Authorized)
+  # ─────────────────────────────────────────
+  juice-shop:
+    image: bkimminich/juice-shop:latest
+    container_name: spaider_lab_juice_shop
+    restart: unless-stopped
+    ports:
+      - "3001:3000"
+    networks:
+      - spaider_net
+    environment:
+      - NODE_ENV=unsafe
+
+  dvwa:
+    image: vulnerables/web-dvwa:latest
+    container_name: spaider_lab_dvwa
+    restart: unless-stopped
+    ports:
+      - "8082:80"
+    networks:
+      - spaider_net
+
+  webgoat:
+    image: webgoat/webgoat:latest
+    container_name: spaider_lab_webgoat
+    restart: unless-stopped
+    ports:
+      - "8083:8080"
+    networks:
+      - spaider_net
+    environment:
+      - WEBGOAT_PORT=8080
+
 networks:
   spaider_net:
     driver: bridge

@@ -2,12 +2,12 @@
 
 import asyncio
 from datetime import datetime, timedelta
-from sqlalchemy import select
+from sqlalchemy import select, delete
 import structlog
 
 from app.core.database import engine, Base, AsyncSessionLocal
 from app.models.models import (
-    User, Scope, Asset, Service, ScanJob, Finding, Alert,
+    User, Scope, Target, Asset, Service, ScanJob, Finding, Alert,
     MalwareSample, IOC, MitreTechnique, Report,
     ScanMode, ScanStatus, Severity, AssetType, AlertStatus
 )
@@ -19,14 +19,16 @@ logger = structlog.get_logger(__name__)
 async def seed_database(force: bool = False):
     """Seed the database with default admin user and cyber security data."""
     async with engine.begin() as conn:
+        if force:
+            await conn.run_sync(Base.metadata.drop_all)
         await conn.run_sync(lambda c: Base.metadata.create_all(c, checkfirst=True))
 
     async with AsyncSessionLocal() as db:
         # Check if already seeded
-        res = await db.execute(select(User))
-        existing_users = res.scalars().all()
-        if existing_users and not force:
-            logger.info("Database already seeded, skipping.")
+        res = await db.execute(select(Target))
+        existing_targets = res.scalars().all()
+        if existing_targets and not force:
+            logger.info("Database already seeded with targets, skipping.")
             return
 
         logger.info("Seeding SPAIDER cyber intelligence platform data...")
@@ -47,7 +49,7 @@ async def seed_database(force: bool = False):
             username="analyst",
             email="analyst@spaider.internal",
             hashed_password=hash_password("analyst123"),
-            full_name="Lead SOC Analyst",
+            full_name="Lead Security Researcher",
             role="analyst",
             is_active=True,
             is_superuser=False,
@@ -55,12 +57,92 @@ async def seed_database(force: bool = False):
         db.add_all([admin_user, analyst_user])
         await db.flush()
 
-        # 2. Scopes
-        scope1 = Scope(
+        # ─── 2. Lab Targets (controlled test environment) ────────────────────
+        target_js = Target(
+            id="tgt-juice-001",
+            name="OWASP Juice Shop",
+            hostname="juice-shop",
+            description="Deliberately insecure Node.js web application for security training and bug bounty research. AUTHORIZED LAB TARGET.",
+            status="active",
+            tags=["lab", "owasp", "nodejs", "authorized"],
+        )
+        target_dvwa = Target(
+            id="tgt-dvwa-002",
+            name="Damn Vulnerable Web App (DVWA)",
+            hostname="dvwa",
+            description="PHP/MySQL vulnerable web application for security research. AUTHORIZED LAB TARGET.",
+            status="active",
+            tags=["lab", "php", "dvwa", "authorized"],
+        )
+        target_webgoat = Target(
+            id="tgt-webgoat-003",
+            name="WebGoat",
+            hostname="webgoat",
+            description="OWASP WebGoat deliberately insecure Java application. AUTHORIZED LAB TARGET.",
+            status="active",
+            tags=["lab", "java", "owasp", "authorized"],
+        )
+        db.add_all([target_js, target_dvwa, target_webgoat])
+        await db.flush()
+
+        # 3. Scopes — map each lab target to an AUTHORIZED scope
+        scope_js = Scope(
+            id="scp-juice-001",
+            target_id="tgt-juice-001",
+            name="Juice Shop Lab Scope",
+            description="Full authorized scope for OWASP Juice Shop lab environment",
+            scope_type="url",
+            value="http://juice-shop:3000",
+            authorization_status="AUTHORIZED",
+            targets=["http://juice-shop:3000", "http://localhost:3001"],
+            excluded_targets=[],
+            active_testing=True,
+            destructive_testing=False,
+            rate_limit="controlled",
+            authorized_by="Lab Administrator",
+            valid_from=datetime.utcnow() - timedelta(days=30),
+            valid_until=datetime.utcnow() + timedelta(days=365),
+        )
+        scope_dvwa = Scope(
+            id="scp-dvwa-002",
+            target_id="tgt-dvwa-002",
+            name="DVWA Lab Scope",
+            description="Authorized scope for DVWA lab research environment",
+            scope_type="url",
+            value="http://dvwa:80",
+            authorization_status="AUTHORIZED",
+            targets=["http://dvwa:80", "http://localhost:8082"],
+            excluded_targets=[],
+            active_testing=True,
+            destructive_testing=False,
+            rate_limit="controlled",
+            authorized_by="Lab Administrator",
+            valid_from=datetime.utcnow() - timedelta(days=30),
+            valid_until=datetime.utcnow() + timedelta(days=365),
+        )
+        scope_webgoat = Scope(
+            id="scp-webgoat-003",
+            target_id="tgt-webgoat-003",
+            name="WebGoat Lab Scope",
+            description="Authorized scope for WebGoat lab environment",
+            scope_type="url",
+            value="http://webgoat:8080",
+            authorization_status="AUTHORIZED",
+            targets=["http://webgoat:8080", "http://localhost:8083"],
+            excluded_targets=[],
+            active_testing=True,
+            destructive_testing=False,
+            rate_limit="controlled",
+            authorized_by="Lab Administrator",
+            valid_from=datetime.utcnow() - timedelta(days=30),
+            valid_until=datetime.utcnow() + timedelta(days=365),
+        )
+        scope_infra = Scope(
             id="scp-corp-001",
             name="Primary Infrastructure Scope",
             description="Core corporate network and DMZ perimeter systems",
-            targets=["192.168.1.0/24", "10.0.0.0/16", "api.spaider-security.io"],
+            authorization_status="AUTHORIZED",
+            targets=["192.168.1.0/24", "10.0.0.0/16"],
             excluded_targets=["192.168.1.254"],
             active_testing=True,
             destructive_testing=False,
@@ -69,23 +151,10 @@ async def seed_database(force: bool = False):
             valid_from=datetime.utcnow() - timedelta(days=30),
             valid_until=datetime.utcnow() + timedelta(days=365),
         )
-        scope2 = Scope(
-            id="scp-web-002",
-            name="External Web Applications Scope",
-            description="Production web portals and public API endpoints",
-            targets=["https://app.spaider-security.io", "https://auth.spaider-security.io"],
-            excluded_targets=[],
-            active_testing=True,
-            destructive_testing=False,
-            rate_limit="stealth",
-            authorized_by="VP of Engineering",
-            valid_from=datetime.utcnow() - timedelta(days=15),
-            valid_until=datetime.utcnow() + timedelta(days=180),
-        )
-        db.add_all([scope1, scope2])
+        db.add_all([scope_js, scope_dvwa, scope_webgoat, scope_infra])
         await db.flush()
 
-        # 3. Assets
+        # 4. Assets
         asset1 = Asset(
             id="ast-dmz-001",
             name="DMZ Perimeter Gateway",
@@ -167,7 +236,7 @@ async def seed_database(force: bool = False):
             progress=100,
             started_at=datetime.utcnow() - timedelta(hours=4),
             completed_at=datetime.utcnow() - timedelta(hours=3, minutes=45),
-            scope_id=scope1.id,
+            scope_id=scope_infra.id,
             created_by=admin_user.id,
         )
         job2 = ScanJob(
@@ -176,12 +245,13 @@ async def seed_database(force: bool = False):
             mode=ScanMode.RED,
             status=ScanStatus.COMPLETED,
             plugin="nuclei",
-            targets=["https://app.spaider-security.io"],
+            targets=["http://juice-shop:3000"],
+            target_id=target_js.id,
             options={"severity": "critical,high,medium", "templates": "cves,vulnerabilities"},
             progress=100,
             started_at=datetime.utcnow() - timedelta(hours=2),
             completed_at=datetime.utcnow() - timedelta(hours=1, minutes=40),
-            scope_id=scope2.id,
+            scope_id=scope_js.id,
             created_by=admin_user.id,
         )
         job3 = ScanJob(
@@ -194,7 +264,7 @@ async def seed_database(force: bool = False):
             options={"rule_level": 8, "time_range": "24h"},
             progress=74,
             started_at=datetime.utcnow() - timedelta(minutes=45),
-            scope_id=scope1.id,
+            scope_id=scope_infra.id,
             created_by=analyst_user.id,
         )
         job4 = ScanJob(
@@ -208,7 +278,7 @@ async def seed_database(force: bool = False):
             progress=100,
             started_at=datetime.utcnow() - timedelta(hours=6),
             completed_at=datetime.utcnow() - timedelta(hours=5),
-            scope_id=scope1.id,
+            scope_id=scope_infra.id,
             created_by=admin_user.id,
         )
         db.add_all([job1, job2, job3, job4])

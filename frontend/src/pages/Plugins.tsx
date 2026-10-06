@@ -3,20 +3,31 @@ import { pluginApi } from '../api/client'
 
 const MOCK_PLUGINS = [
   { name:'nmap', version:'7.94', category:'Network Discovery', enabled:true, icon:'📡', description:'Network scanner — port scanning, OS detection, service fingerprinting' },
+  { name:'zingela', version:'1.2.0', category:'Network Discovery', enabled:true, icon:'🎯', description:'Stateless mass TCP/UDP port scanner in Zig — line-rate SYN scanning with SipHash & AF_XDP' },
   { name:'nuclei', version:'3.2.4', category:'Web/API Security', enabled:true, icon:'⚡', description:'Template-based vulnerability scanner with 8000+ community templates' },
+  { name:'lisdex', version:'2.1.0', category:'Endpoint Audit', enabled:true, icon:'🐧', description:'Linux security & exploit indexer — SUID binaries, kernel CVEs, capabilities, and privesc paths' },
+  { name:'cre', version:'1.4.0', category:'Governance & Compliance', enabled:true, icon:'📚', description:'OWASP OpenCRE — cross-framework mapping for NIST 800-53, ISO 27001, ASVS, and CWE' },
+  { name:'fwrule', version:'1.8.0', category:'Defensive Hardening', enabled:true, icon:'🛡️', description:'Automated firewall rule synthesizer & policy enforcement for iptables, nftables, UFW, pf, and AWS' },
   { name:'zeek', version:'6.0.0', category:'Network Detection', enabled:true, icon:'🕸️', description:'Network analysis framework — structured logs for DNS, HTTP, TLS, conn' },
   { name:'suricata', version:'7.0.3', category:'IDS/IPS', enabled:true, icon:'🛡️', description:'High-performance network threat detection engine with rule support' },
   { name:'wazuh', version:'4.8.0', category:'SIEM/EDR', enabled:false, icon:'🔍', description:'Open-source security platform — SIEM, XDR, compliance' },
   { name:'yara', version:'4.5.1', category:'Malware Detection', enabled:true, icon:'🦠', description:'Pattern matching for malware researchers — rules engine' },
+  { name:'shodan', version:'1.0.0', category:'OSINT', enabled:true, icon:'🌐', description:'Internet-wide host intelligence — open ports, banners, CVEs, and exposures' },
+  { name:'virustotal', version:'3.0.0', category:'Threat Intel', enabled:true, icon:'🦠', description:'Multi-engine AV and reputation analysis across 70+ security vendors' },
+  { name:'wifite', version:'2.7.0', category:'Wireless Security', enabled:true, icon:'📶', description:'Automated wireless network auditing — WPS, WPA/WPA2 handshakes, PMKID, and Evil Twin' },
   { name:'burp', version:'2024.5', category:'Web Proxy', enabled:false, icon:'🔥', description:'Industry-standard web security testing tool — Montoya API integration' },
   { name:'caido', version:'0.42', category:'Web Proxy', enabled:false, icon:'🌊', description:'Modern web proxy with Automate fuzzing and AI-powered analysis' },
+  { name:'godseye', version:'2024', category:'Global Intel', enabled:true, icon:'👁️', description:'AI-powered global intelligence — satellite, maritime, flight, CCTV, and live incident feeds' },
 ]
 
 const CATEGORY_COLORS: Record<string,string> = {
   'Network Discovery':'var(--color-cyan)', 'Web/API Security':'var(--color-blue)',
   'Network Detection':'var(--color-purple)', 'IDS/IPS':'var(--color-red)',
   'SIEM/EDR':'var(--color-high)', 'Malware Detection':'var(--color-medium)',
-  'Web Proxy':'var(--color-safe)',
+  'Web Proxy':'var(--color-safe)', 'Endpoint Audit':'#38bdf8',
+  'Governance & Compliance':'#a855f7', 'Defensive Hardening':'#10b981',
+  'OSINT':'#e11d48', 'Threat Intel':'#3b82f6',
+  'Wireless Security':'#f59e0b', 'Global Intel':'#06b6d4',
 }
 
 export default function Plugins() {

@@ -473,10 +473,31 @@ def cmd_web(args):
             console.print("\n[yellow]Web server stopped.[/yellow]")
 
 
+def cmd_httpheader(args):
+    """Inspect HTTPS security headers for target host."""
+    target = args.target
+    if HAS_RICH:
+        console.print(f"[bold cyan]🔍 Inspecting HTTPS security headers on [green]{target}[/green]...[/bold cyan]")
+    else:
+        print(f"[*] Inspecting HTTPS security headers on {target}...")
+
+    from app.plugins.httpheader.plugin import scan, report
+    result = scan(
+        targets=[target],
+        options={"ai": "yes" if getattr(args, "ai", False) else "no", "interval": getattr(args, "interval", 1.0)},
+    )
+    rep = report(result)
+    if HAS_RICH:
+        console.print(Panel(rep, title="[bold cyan]HTTP Security Header Report[/bold cyan]", border_style="cyan"))
+    else:
+        print(rep)
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 #  INTERACTIVE CONSOLE (MSFCONSOLE STYLE)
 # ─────────────────────────────────────────────────────────────────────────────
 def cmd_console(args):
+
     print_banner()
     if HAS_RICH:
         console.print("[bold yellow]Interactive Cyber Command Shell started.[/bold yellow] Type [cyan]help[/cyan] or [cyan]exit[/cyan].\n")
@@ -543,6 +564,13 @@ def cmd_console(args):
                 else:
                     sub_args = argparse.Namespace(file=parts[1])
                     cmd_malware(sub_args)
+            elif cmd in ("headers", "httpheader"):
+                if len(parts) < 2:
+                    print("Usage: headers <hostname> [--ai]")
+                else:
+                    use_ai = "--ai" in parts
+                    sub_args = argparse.Namespace(target=parts[1], ai=use_ai, interval=1.0)
+                    cmd_httpheader(sub_args)
             elif cmd == "status":
                 cmd_status(None)
             else:
@@ -572,6 +600,12 @@ def main():
     p_scan.add_argument("target", help="Target IP or hostname")
     p_scan.add_argument("-t", "--type", choices=["quick", "full", "stealth", "udp", "os"], default="quick", help="Scan profile")
     p_scan.add_argument("-p", "--ports", help="Port list (e.g. 80,443,8080)")
+
+    # headers / httpheader
+    p_headers = subparsers.add_parser("headers", aliases=["httpheader"], help="Inspect HTTPS security headers (HSTS, CSP, nosniff, framing)")
+    p_headers.add_argument("target", help="Target hostname (e.g. example.com)")
+    p_headers.add_argument("--ai", action="store_true", help="Generate defensive AI remediation advisory")
+    p_headers.add_argument("--interval", type=float, default=1.0, help="Interval between requests in seconds")
 
     # ai
     p_ai = subparsers.add_parser("ai", help="Ask AI Security Analyst & Reasoning Chain")
@@ -607,6 +641,8 @@ def main():
 
     cmd_map = {
         "scan": cmd_scan,
+        "headers": cmd_httpheader,
+        "httpheader": cmd_httpheader,
         "ai": cmd_ai,
         "malware": cmd_malware,
         "status": cmd_status,
@@ -614,6 +650,7 @@ def main():
         "web": cmd_web,
         "console": cmd_console,
     }
+
 
     handler = cmd_map.get(args.command)
     if handler:

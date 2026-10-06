@@ -1,0 +1,1 @@
+# WiFite plugin package

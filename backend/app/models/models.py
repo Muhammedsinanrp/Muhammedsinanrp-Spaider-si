@@ -92,25 +92,45 @@ class User(Base, TimestampMixin):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-#  Scopes & Authorisation
+#  Targets & Scopes
 # ─────────────────────────────────────────────────────────────────────────────
+
+class Target(Base, TimestampMixin):
+    __tablename__ = "targets"
+
+    id          = Column(String(36), primary_key=True, default=new_id)
+    name        = Column(String(128), nullable=False)
+    hostname    = Column(String(255), nullable=False, index=True)
+    description = Column(Text)
+    status      = Column(String(32), default="active")  # active | paused | archived
+    tags        = Column(JSON, default=list)
+
+    scopes    = relationship("Scope", back_populates="target", cascade="all, delete-orphan")
+    scan_jobs = relationship("ScanJob", back_populates="target")
+
 
 class Scope(Base, TimestampMixin):
     __tablename__ = "scopes"
 
     id                     = Column(String(36), primary_key=True, default=new_id)
+    target_id              = Column(String(36), ForeignKey("targets.id"), nullable=True)
     name                   = Column(String(128), nullable=False)
     description            = Column(Text)
+    scope_type             = Column(String(32), default="url")  # url | domain | ip_range | cidr | host
+    value                  = Column(String(512), nullable=True)
+    authorization_status   = Column(String(32), default="AUTHORIZED")  # AUTHORIZED | PENDING | REVOKED
     targets                = Column(JSON, default=list)
     excluded_targets       = Column(JSON, default=list)
-    active_testing         = Column(Boolean, default=False)
+    active_testing         = Column(Boolean, default=True)
     destructive_testing    = Column(Boolean, default=False)
     rate_limit             = Column(String(32), default="controlled")
     authorized_by          = Column(String(255))
     authorization_document = Column(String(512))
     valid_from             = Column(DateTime)
     valid_until            = Column(DateTime)
+    expires_at             = Column(DateTime, nullable=True)
 
+    target    = relationship("Target", back_populates="scopes")
     scan_jobs = relationship("ScanJob", back_populates="scope")
 
 
@@ -192,15 +212,53 @@ class ScanJob(Base, TimestampMixin):
     completed_at   = Column(DateTime, nullable=True)
 
     scope_id   = Column(String(36), ForeignKey("scopes.id"), nullable=True)
+    target_id  = Column(String(36), ForeignKey("targets.id"), nullable=True)
     created_by = Column(String(36), ForeignKey("users.id"), nullable=True)
 
     scope           = relationship("Scope", back_populates="scan_jobs")
+    target          = relationship("Target", back_populates="scan_jobs")
     created_by_user = relationship("User", back_populates="scan_jobs")
     findings        = relationship("Finding", back_populates="scan_job")
+    events          = relationship("ScanEvent", back_populates="scan_job", cascade="all, delete-orphan")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-#  Findings (Vulnerabilities)
+#  Endpoints & Scan Events
+# ─────────────────────────────────────────────────────────────────────────────
+
+class Endpoint(Base, TimestampMixin):
+    __tablename__ = "endpoints"
+
+    id          = Column(String(36), primary_key=True, default=new_id)
+    asset_id    = Column(String(36), ForeignKey("assets.id"), nullable=True)
+    target_id   = Column(String(36), ForeignKey("targets.id"), nullable=True)
+    url         = Column(String(1024), nullable=False)
+    path        = Column(String(512), nullable=False, index=True)
+    method      = Column(String(16), default="GET")
+    status_code = Column(Integer, nullable=True)
+    content_type= Column(String(128), nullable=True)
+    params      = Column(JSON, default=list)
+    headers     = Column(JSON, default=dict)
+    extra_data  = Column(JSON, default=dict)
+
+    asset = relationship("Asset", backref="endpoints")
+
+
+class ScanEvent(Base, TimestampMixin):
+    __tablename__ = "scan_events"
+
+    id          = Column(String(36), primary_key=True, default=new_id)
+    scan_job_id = Column(String(36), ForeignKey("scan_jobs.id"), nullable=False, index=True)
+    stage       = Column(String(64), nullable=False)  # RECON | PORT_SCAN | DISCOVERY | WEB_SCAN | ANALYSIS | VALIDATION | REPORT
+    progress    = Column(Integer, default=0)
+    message     = Column(String(512), nullable=False)
+    data        = Column(JSON, default=dict)
+
+    scan_job = relationship("ScanJob", back_populates="events")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  Findings (Universal Vulnerability Schema)
 # ─────────────────────────────────────────────────────────────────────────────
 
 class Finding(Base, TimestampMixin):
@@ -210,6 +268,21 @@ class Finding(Base, TimestampMixin):
     title             = Column(String(512), nullable=False)
     description       = Column(Text)
     severity          = Column(SAEnum(Severity), nullable=False, index=True)
+    confidence        = Column(Float, default=0.90)
+    risk_score        = Column(Float, default=0.0)
+    asset_value       = Column(String(512), nullable=True, index=True)
+    endpoint          = Column(String(1024), nullable=True)
+    port              = Column(Integer, nullable=True)
+    protocol          = Column(String(16), default="http")
+    cve               = Column(String(64), nullable=True)
+    cwe               = Column(String(128), nullable=True)
+    cvss              = Column(Float, nullable=True)
+    scanner           = Column(String(64), default="nuclei")
+    status            = Column(String(32), default="open")  # open | triaged | validated | confirmed | reported | fixed | false_positive
+    curl_poc          = Column(Text, nullable=True)
+    dedup_hash        = Column(String(64), nullable=True, index=True)
+    occurrence_count  = Column(Integer, default=1)
+
     plugin            = Column(String(64))
     template_id       = Column(String(128))
     cve_ids           = Column(JSON, default=list)

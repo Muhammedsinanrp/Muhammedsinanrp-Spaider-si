@@ -1,250 +1,217 @@
-import { useEffect, useRef } from 'react'
-import { useQuery } from '@tanstack/react-query'
-import { assetApi } from '../api/client'
+import { useState, useEffect, useRef } from 'react'
+import SpiderWebCanvas from '../components/SpiderWebCanvas'
 
-/* ── Mock network graph data ───────────────────────────── */
-const MOCK_NODES = [
-  { id:'internet', label:'INTERNET', type:'internet', x:400, y:50, color:'#555', icon:'🌐' },
-  { id:'fw',       label:'Firewall', type:'firewall', x:400, y:150, color:'#ff9800', icon:'🔥' },
-  { id:'web01',    label:'web01\n192.168.1.10', type:'host', x:200, y:280, color:'#3b82f6', icon:'🖥️', findings:3, alerts:1 },
-  { id:'api',      label:'api\n192.168.1.11',  type:'host', x:350, y:300, color:'#3b82f6', icon:'⚙️', findings:1, alerts:0 },
-  { id:'db01',     label:'db01\n192.168.1.20',  type:'host', x:200, y:420, color:'#ff3b5c', icon:'🗄️', findings:2, alerts:0 },
-  { id:'vpn',      label:'VPN\n192.168.1.5',    type:'host', x:600, y:280, color:'#a855f7', icon:'🔐', findings:0, alerts:0 },
-  { id:'pc01',     label:'pc01\n192.168.1.30',  type:'host', x:520, y:420, color:'#ff9800', icon:'💻', findings:1, alerts:2 },
-  { id:'pc02',     label:'pc02\n192.168.1.31',  type:'host', x:680, y:420, color:'#3b82f6', icon:'💻', findings:0, alerts:0 },
-]
-const MOCK_EDGES = [
-  { from:'internet', to:'fw' },
-  { from:'fw', to:'web01' }, { from:'fw', to:'api' }, { from:'fw', to:'vpn' },
-  { from:'web01', to:'db01' }, { from:'api', to:'db01' },
-  { from:'vpn', to:'pc01' }, { from:'vpn', to:'pc02' },
-  { from:'pc01', to:'db01' }, // lateral movement!
+const NODE_TYPES = [
+  { type: 'DOMAIN',    color: '#00e5ff', count: 1,  desc: 'Root domain target' },
+  { type: 'SUBDOMAIN', color: '#00ff88', count: 62, desc: 'Enumerated subdomains' },
+  { type: 'API',       color: '#a855f7', count: 43, desc: 'API endpoints & services' },
+  { type: 'ENDPOINT',  color: '#38bdf8', count: 234,desc: 'Discoverable endpoints' },
+  { type: 'SERVICE',   color: '#6366f1', count: 18, desc: 'Running network services' },
+  { type: 'VULN',      color: '#ff3b5c', count: 14, desc: 'Confirmed vulnerabilities' },
 ]
 
-const NODE_R = 30
+const RECENT_DISCOVERIES = [
+  { time: '18:54', node: 'admin.example.com', type: 'SUBDOMAIN', relation: 'Found via subfinder' },
+  { time: '18:52', node: '/api/v2/internal', type: 'ENDPOINT',  relation: 'JS bundle analysis' },
+  { time: '18:49', node: 'SSH:22 (192.168.1.10)', type: 'SERVICE', relation: 'Nmap scan' },
+  { time: '18:47', node: '/graphql', type: 'API', relation: 'Directory brute-force' },
+  { time: '18:44', node: 'SSRF on /api/fetch', type: 'VULN', relation: 'AI Validation' },
+  { time: '18:41', node: 'dev.example.com', type: 'SUBDOMAIN', relation: 'DNS brute-force' },
+]
+
+const TOPOLOGY = [
+  { from: 'example.com', to: 'api.example.com', rel: 'DOMAIN → SUBDOMAIN' },
+  { from: 'api.example.com', to: '/api/v1', rel: 'SUBDOMAIN → API' },
+  { from: '/api/v1', to: '/api/v1/fetch', rel: 'API → ENDPOINT' },
+  { from: '/api/v1/fetch', to: 'SSRF', rel: 'ENDPOINT → VULNERABILITY' },
+  { from: 'example.com', to: 'HTTP:80', rel: 'DOMAIN → SERVICE' },
+  { from: 'example.com', to: 'HTTPS:443', rel: 'DOMAIN → SERVICE' },
+]
 
 export default function NetworkMap() {
-  const canvasRef = useRef<HTMLCanvasElement>(null)
-  const animFrameRef = useRef<number>(0)
+  const [nodeCount, setNodeCount] = useState(372)
+  const [edgeCount, setEdgeCount] = useState(841)
+  const [newNode, setNewNode] = useState<string | null>(null)
 
-  const { data: graphData } = useQuery({
-    queryKey:['asset-graph'], queryFn: assetApi.graph, retry:false,
-  })
-
-  /* Canvas 2D network map */
   useEffect(() => {
-    const canvas = canvasRef.current
-    if (!canvas) return
-    const ctx = canvas.getContext('2d')!
-    let hovered: string | null = null
-
-    const resize = () => {
-      canvas.width = canvas.offsetWidth
-      canvas.height = canvas.offsetHeight
-    }
-    resize()
-    window.addEventListener('resize', resize)
-
-    const draw = () => {
-      ctx.clearRect(0, 0, canvas.width, canvas.height)
-
-      // Background grid
-      ctx.strokeStyle = 'rgba(255,255,255,0.03)'
-      ctx.lineWidth = 1
-      for (let x = 0; x < canvas.width; x += 40) {
-        ctx.beginPath(); ctx.moveTo(x,0); ctx.lineTo(x, canvas.height); ctx.stroke()
+    const id = setInterval(() => {
+      if (Math.random() > 0.6) {
+        setNodeCount(n => n + 1)
+        setEdgeCount(e => e + Math.floor(Math.random() * 3) + 1)
+        const types = ['SUBDOMAIN', 'ENDPOINT', 'API', 'SERVICE']
+        const labels = ['dev2.example.com', '/api/v3/admin', 'GraphQL Schema', 'Redis:6379', '/oauth/token']
+        setNewNode(labels[Math.floor(Math.random() * labels.length)])
+        setTimeout(() => setNewNode(null), 2500)
       }
-      for (let y = 0; y < canvas.height; y += 40) {
-        ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(canvas.width,y); ctx.stroke()
-      }
-
-      // Scale nodes to canvas
-      const scaleX = canvas.width / 800
-      const scaleY = canvas.height / 500
-
-      // Draw edges
-      MOCK_EDGES.forEach(e => {
-        const from = MOCK_NODES.find(n => n.id === e.from)!
-        const to   = MOCK_NODES.find(n => n.id === e.to)!
-        const isLateral = (e.from === 'pc01' && e.to === 'db01')
-        ctx.beginPath()
-        ctx.moveTo(from.x * scaleX, from.y * scaleY)
-        ctx.lineTo(to.x * scaleX, to.y * scaleY)
-        ctx.strokeStyle = isLateral ? 'rgba(255,59,92,0.7)' : 'rgba(0,229,255,0.2)'
-        ctx.lineWidth = isLateral ? 2.5 : 1.5
-        if (isLateral) ctx.setLineDash([6,4])
-        else ctx.setLineDash([])
-        ctx.stroke()
-        ctx.setLineDash([])
-      })
-
-      // Animated connection pulse
-      const t = Date.now() / 1000
-      MOCK_EDGES.forEach((e, i) => {
-        const from = MOCK_NODES.find(n => n.id === e.from)!
-        const to   = MOCK_NODES.find(n => n.id === e.to)!
-        const progress = ((t * 0.4 + i * 0.3) % 1)
-        const px = (from.x + (to.x - from.x) * progress) * scaleX
-        const py = (from.y + (to.y - from.y) * progress) * scaleY
-        const isLateral = (e.from === 'pc01' && e.to === 'db01')
-        ctx.beginPath()
-        ctx.arc(px, py, 3, 0, Math.PI*2)
-        ctx.fillStyle = isLateral ? 'rgba(255,59,92,0.9)' : 'rgba(0,229,255,0.7)'
-        ctx.fill()
-      })
-
-      // Draw nodes
-      MOCK_NODES.forEach(n => {
-        const x = n.x * scaleX, y = n.y * scaleY
-        const isHovered = hovered === n.id
-        const r = isHovered ? NODE_R + 4 : NODE_R
-
-        // Glow
-        if (n.findings! > 0 || n.alerts! > 0) {
-          const grad = ctx.createRadialGradient(x,y,0,x,y,r*2)
-          grad.addColorStop(0, 'rgba(255,59,92,0.3)')
-          grad.addColorStop(1, 'rgba(255,59,92,0)')
-          ctx.beginPath(); ctx.arc(x,y,r*2,0,Math.PI*2)
-          ctx.fillStyle = grad; ctx.fill()
-        }
-
-        // Node circle
-        ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI*2)
-        ctx.fillStyle = n.id === 'internet' ? '#1a1a2e' : '#16162a'
-        ctx.fill()
-        ctx.strokeStyle = n.color + (isHovered ? 'ff' : '99')
-        ctx.lineWidth = isHovered ? 3 : 2
-        if (n.alerts! > 0) {
-          ctx.strokeStyle = '#ff3b5c'
-          ctx.shadowColor = '#ff3b5c'
-          ctx.shadowBlur = 15
-        }
-        ctx.stroke()
-        ctx.shadowBlur = 0
-
-        // Icon
-        ctx.font = `${r * 0.7}px serif`
-        ctx.textAlign = 'center'
-        ctx.textBaseline = 'middle'
-        ctx.fillText(n.icon, x, y)
-
-        // Label
-        ctx.font = '10px Inter, sans-serif'
-        ctx.fillStyle = 'rgba(240,240,255,0.8)'
-        ctx.textAlign = 'center'
-        ctx.textBaseline = 'top'
-        n.label.split('\n').forEach((line, li) => {
-          ctx.fillText(line, x, y + r + 4 + li * 12)
-        })
-
-        // Badge
-        if (n.findings! > 0) {
-          ctx.beginPath(); ctx.arc(x + r - 4, y - r + 4, 8, 0, Math.PI*2)
-          ctx.fillStyle = '#ff3b5c'; ctx.fill()
-          ctx.font = 'bold 8px Inter'
-          ctx.fillStyle = '#fff'
-          ctx.textAlign = 'center'; ctx.textBaseline = 'middle'
-          ctx.fillText(String(n.findings), x + r - 4, y - r + 4)
-        }
-      })
-
-      animFrameRef.current = requestAnimationFrame(draw)
-    }
-
-    // Mouse hover
-    canvas.addEventListener('mousemove', e => {
-      const rect = canvas.getBoundingClientRect()
-      const mx = (e.clientX - rect.left) * (canvas.width / rect.width)
-      const my = (e.clientY - rect.top) * (canvas.height / rect.height)
-      const scaleX = canvas.width / 800, scaleY = canvas.height / 500
-      hovered = null
-      MOCK_NODES.forEach(n => {
-        const dx = mx - n.x * scaleX, dy = my - n.y * scaleY
-        if (Math.sqrt(dx*dx+dy*dy) < NODE_R + 5) hovered = n.id
-      })
-      canvas.style.cursor = hovered ? 'pointer' : 'default'
-    })
-
-    draw()
-    return () => {
-      cancelAnimationFrame(animFrameRef.current)
-      window.removeEventListener('resize', resize)
-    }
+    }, 4000)
+    return () => clearInterval(id)
   }, [])
 
   return (
     <div>
-      <div className="page-header">
+      <div className="page-header" style={{ marginBottom: 'var(--space-6)' }}>
         <div>
-          <h1 className="page-title gradient-text-cyan">🌍 Network Map</h1>
-          <p className="page-subtitle">Live network topology with attack paths and asset relationships</p>
+          <h1 className="page-title gradient-text-cyan">🕸️ Attack Surface Map</h1>
+          <p className="page-subtitle">3D relationship graph · Domain → Subdomain → IP → Port → Service → API → Endpoint → Vulnerability</p>
         </div>
         <div className="flex gap-2">
-          <button className="btn btn-ghost">🔍 Run Discovery</button>
-          <button className="btn btn-primary">Export Topology</button>
-        </div>
-      </div>
-
-      {/* Legend */}
-      <div className="flex gap-4 mb-4" style={{ fontSize:'0.75rem' }}>
-        {[
-          { color:'var(--color-blue)', label:'Normal host' },
-          { color:'var(--color-red)', label:'Vulnerable host' },
-          { color:'#ff9800', label:'Firewall' },
-          { color:'var(--color-purple)', label:'VPN / edge' },
-        ].map(l => (
-          <span key={l.label} className="flex items-center gap-2">
-            <span style={{ width:10, height:10, borderRadius:'50%', background:l.color, display:'inline-block' }} />
-            {l.label}
-          </span>
-        ))}
-        <span className="flex items-center gap-2">
-          <span style={{ width:20, height:2, background:'var(--color-red)', display:'inline-block', borderTop:'2px dashed var(--color-red)' }} />
-          Lateral movement
-        </span>
-      </div>
-
-      {/* Canvas */}
-      <div className="canvas-container" style={{ height:520 }}>
-        <div className="canvas-overlay">
-          <div style={{ background:'rgba(10,10,20,0.8)', border:'1px solid var(--color-border-accent)', borderRadius:'var(--radius-md)', padding:'var(--space-3)', fontSize:'0.75rem' }}>
-            <div style={{ color:'var(--color-cyan)', fontWeight:700, marginBottom:4 }}>NETWORK TOPOLOGY</div>
-            <div style={{ color:'var(--color-text-muted)' }}>{MOCK_NODES.length} nodes · {MOCK_EDGES.length} connections</div>
-            <div style={{ color:'var(--color-red)', marginTop:4 }}>⚠ 1 lateral movement path</div>
+          <div style={{ padding: '6px 14px', background: 'rgba(0,255,136,0.08)', border: '1px solid rgba(0,255,136,0.3)',
+            borderRadius: 'var(--radius-md)', fontSize: '0.75rem', color: '#00ff88', fontWeight: 700, display: 'flex', alignItems: 'center', gap: 6 }}>
+            <span className="status-dot running" />
+            LIVE DISCOVERY
+          </div>
+          <div style={{ padding: '6px 14px', background: 'rgba(255,255,255,0.04)', border: '1px solid var(--color-border)',
+            borderRadius: 'var(--radius-md)', fontSize: '0.75rem', fontFamily: 'var(--font-mono)', color: 'var(--color-text-muted)' }}>
+            {nodeCount} nodes · {edgeCount} edges
           </div>
         </div>
-        <canvas ref={canvasRef} style={{ width:'100%', height:'100%' }} />
       </div>
 
-      {/* Node list */}
-      <div className="card mt-4">
-        <div className="card-header">
-          <span className="card-title">Network Nodes</span>
+      {/* Stats */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6, 1fr)', gap: 10, marginBottom: 'var(--space-5)' }}>
+        {NODE_TYPES.map(nt => (
+          <div key={nt.type} style={{
+            padding: 12, borderRadius: 8, textAlign: 'center',
+            background: `${nt.color}08`, border: `1px solid ${nt.color}30`,
+          }}>
+            <div style={{ fontSize: '1.4rem', fontWeight: 900, color: nt.color, fontFamily: 'var(--font-mono)' }}>{nt.count}</div>
+            <div style={{ fontSize: '0.62rem', fontWeight: 800, color: nt.color, letterSpacing: '0.08em' }}>{nt.type}</div>
+            <div style={{ fontSize: '0.58rem', color: 'var(--color-text-muted)', marginTop: 2 }}>{nt.desc}</div>
+            <div style={{ width: '100%', height: 3, background: `${nt.color}20`, borderRadius: 2, marginTop: 8, overflow: 'hidden' }}>
+              <div style={{ width: `${Math.min(100, (nt.count / 234) * 100)}%`, height: '100%', background: nt.color }} />
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {/* New node discovered toast */}
+      {newNode && (
+        <div style={{
+          position: 'fixed', top: 80, right: 24, zIndex: 1000,
+          padding: '10px 16px', background: 'rgba(0,229,255,0.12)',
+          border: '1px solid rgba(0,229,255,0.5)', borderRadius: 8,
+          fontSize: '0.75rem', color: '#00e5ff', fontWeight: 700,
+          boxShadow: '0 0 20px rgba(0,229,255,0.2)',
+          animation: 'animate-fade-in 0.3s ease',
+        }}>
+          🔍 NEW NODE DISCOVERED<br />
+          <span style={{ color: 'var(--color-text-primary)', fontFamily: 'var(--font-mono)' }}>{newNode}</span>
         </div>
-        <table className="data-table">
-          <thead>
-            <tr><th>Node</th><th>IP</th><th>Type</th><th>Findings</th><th>Alerts</th></tr>
-          </thead>
-          <tbody>
-            {MOCK_NODES.filter(n=>n.type==='host').map(n => (
-              <tr key={n.id}>
-                <td><span style={{ fontSize:'1rem' }}>{n.icon}</span> {n.label.split('\n')[0]}</td>
-                <td className="mono">{n.label.split('\n')[1]}</td>
-                <td><span style={{ color:'var(--color-text-muted)', fontSize:'0.75rem' }}>HOST</span></td>
-                <td>
-                  {n.findings! > 0
-                    ? <span className="badge badge-high">{n.findings} findings</span>
-                    : <span className="badge badge-safe">Clean</span>}
-                </td>
-                <td>
-                  {n.alerts! > 0
-                    ? <span className="badge badge-critical">{n.alerts} alerts</span>
-                    : <span style={{ color:'var(--color-text-muted)', fontSize:'0.75rem' }}>—</span>}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+      )}
+
+      <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 'var(--space-5)' }}>
+
+        {/* Main 3D Map */}
+        <div className="card" style={{
+          border: '1px solid rgba(0,229,255,0.3)',
+          background: 'linear-gradient(135deg, rgba(0,229,255,0.03), rgba(168,85,247,0.03))',
+        }}>
+          <div className="card-header">
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+              <span style={{ fontSize: '1.3rem' }}>🌐</span>
+              <div>
+                <span className="card-title">3D Attack Surface</span>
+                <div style={{ fontSize: '0.7rem', color: 'var(--color-text-muted)' }}>
+                  Hover nodes for details · Auto-rotating · Mouse to interact
+                </div>
+              </div>
+            </div>
+            <div style={{ display: 'flex', gap: 6 }}>
+              {['DOMAIN', 'API', 'ENDPOINT', 'VULN'].map((t, i) => {
+                const colors = ['#00e5ff', '#a855f7', '#38bdf8', '#ff3b5c']
+                return (
+                  <span key={t} style={{
+                    fontSize: '0.6rem', padding: '2px 7px', borderRadius: 3,
+                    background: `${colors[i]}12`, border: `1px solid ${colors[i]}35`,
+                    color: colors[i], fontFamily: 'var(--font-mono)', fontWeight: 700,
+                  }}>{t}</span>
+                )
+              })}
+            </div>
+          </div>
+
+          <div style={{
+            height: 480, background: 'rgba(0,0,0,0.6)', borderRadius: 'var(--radius-md)',
+            border: '1px solid var(--color-border)', position: 'relative', overflow: 'hidden',
+          }}>
+            <SpiderWebCanvas interactive={true} opacity={0.95} />
+
+            {/* HUD overlay */}
+            <div style={{ position: 'absolute', top: 12, left: 12, pointerEvents: 'none' }}>
+              <div style={{ fontSize: '0.65rem', color: '#00e5ff', fontFamily: 'var(--font-mono)', opacity: 0.8 }}>
+                TARGET: example.com<br />
+                NODES: {nodeCount} · EDGES: {edgeCount}
+              </div>
+            </div>
+
+            {/* Legend */}
+            <div style={{ position: 'absolute', bottom: 12, left: 12, pointerEvents: 'none' }}>
+              <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+                {NODE_TYPES.map(nt => (
+                  <div key={nt.type} style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                    <div style={{ width: 8, height: 8, borderRadius: '50%', background: nt.color, boxShadow: `0 0 6px ${nt.color}` }} />
+                    <span style={{ fontSize: '0.6rem', color: nt.color, fontFamily: 'var(--font-mono)' }}>{nt.type}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Right panel */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-4)' }}>
+
+          {/* Relationship topology */}
+          <div className="card">
+            <div className="card-header">
+              <span className="card-title">🔗 Relationship Topology</span>
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              {TOPOLOGY.map((t, i) => (
+                <div key={i} style={{ fontSize: '0.72rem', display: 'flex', flexDirection: 'column', gap: 2 }}>
+                  <div style={{ color: 'var(--color-text-muted)', fontFamily: 'var(--font-mono)', fontSize: '0.6rem', letterSpacing: '0.05em' }}>{t.rel}</div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '4px 8px',
+                    background: 'rgba(255,255,255,0.03)', borderRadius: 4 }}>
+                    <span style={{ color: 'var(--color-cyan)' }}>{t.from}</span>
+                    <span style={{ color: 'var(--color-text-muted)' }}>→</span>
+                    <span style={{ color: t.to.includes('VULN') || t.to.includes('SSRF') ? '#ff3b5c' : 'var(--color-text-primary)' }}>{t.to}</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Recent discoveries */}
+          <div className="card" style={{ flex: 1 }}>
+            <div className="card-header">
+              <span className="card-title">📡 Recent Discoveries</span>
+              <span style={{ fontSize: '0.65rem', color: '#00ff88', fontFamily: 'var(--font-mono)' }}>● LIVE</span>
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6, maxHeight: 280, overflowY: 'auto' }}>
+              {RECENT_DISCOVERIES.map((d, i) => {
+                const typeColors: Record<string, string> = { SUBDOMAIN: '#00ff88', ENDPOINT: '#38bdf8', SERVICE: '#6366f1', API: '#a855f7', VULN: '#ff3b5c' }
+                const c = typeColors[d.type] || '#aaa'
+                return (
+                  <div key={i} style={{
+                    display: 'flex', gap: 8, padding: '6px 8px',
+                    background: d.type === 'VULN' ? 'rgba(255,59,92,0.06)' : 'rgba(255,255,255,0.02)',
+                    border: `1px solid ${d.type === 'VULN' ? 'rgba(255,59,92,0.2)' : 'rgba(255,255,255,0.05)'}`,
+                    borderRadius: 5,
+                  }}>
+                    <span style={{ fontSize: '0.6rem', color: 'var(--color-text-muted)', fontFamily: 'var(--font-mono)', whiteSpace: 'nowrap' }}>{d.time}</span>
+                    <div style={{ flex: 1 }}>
+                      <div style={{ fontSize: '0.72rem', color: 'var(--color-text-primary)', marginBottom: 2 }}>{d.node}</div>
+                      <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
+                        <span style={{ fontSize: '0.58rem', padding: '1px 5px', background: `${c}15`, border: `1px solid ${c}35`, borderRadius: 3, color: c, fontWeight: 800 }}>{d.type}</span>
+                        <span style={{ fontSize: '0.62rem', color: 'var(--color-text-muted)' }}>{d.relation}</span>
+                      </div>
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          </div>
+        </div>
       </div>
     </div>
   )

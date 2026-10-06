@@ -8,13 +8,17 @@
 /* ── CSS Custom Properties ────────────────────────────────── */
 :root {
   /* Brand palette */
-  --color-bg-base:        #060609;
-  --color-bg-surface:     #0d0d14;
-  --color-bg-elevated:    #12121c;
-  --color-bg-card:        #16162a;
-  --color-bg-overlay:     rgba(22, 22, 42, 0.85);
+  --color-bg-base:        #050608;
+  --color-bg-surface:     #0b0f12;
+  --color-bg-elevated:    #11161d;
+  --color-bg-card:        #151b24;
+  --color-bg-overlay:     rgba(17, 22, 29, 0.85);
 
-  /* Accent — Cybersecurity cyan */
+  /* Accent — Cyber green & cyan */
+  --color-green:          #00ff88;
+  --color-green-dim:      rgba(0, 255, 136, 0.15);
+  --color-green-glow:     rgba(0, 255, 136, 0.4);
+
   --color-cyan:           #00e5ff;
   --color-cyan-dim:       rgba(0, 229, 255, 0.15);
   --color-cyan-glow:      rgba(0, 229, 255, 0.4);
@@ -89,6 +93,110 @@
   /* Sidebar */
   --sidebar-width: 260px;
   --topbar-height: 60px;
+}
+
+/* ── Theme: Cyberpunk Neon (Default) ────────────────────────── */
+[data-theme="cyberpunk"] {
+  --color-bg-base:        #060609;
+  --color-bg-surface:     #0d0d14;
+  --color-bg-elevated:    #12121c;
+  --color-bg-card:        #16162a;
+  --color-bg-overlay:     rgba(22, 22, 42, 0.85);
+  --color-cyan:           #00e5ff;
+  --color-cyan-dim:       rgba(0, 229, 255, 0.15);
+  --color-cyan-glow:      rgba(0, 229, 255, 0.4);
+  --color-border-accent:  rgba(0, 229, 255, 0.35);
+  --color-text-accent:    #00e5ff;
+}
+
+/* ── Theme: Matrix Terminal ──────────────────────────────────── */
+[data-theme="matrix"] {
+  --color-bg-base:        #020803;
+  --color-bg-surface:     #051207;
+  --color-bg-elevated:    #091c0c;
+  --color-bg-card:        #0c2610;
+  --color-bg-overlay:     rgba(12, 38, 16, 0.88);
+  --color-cyan:           #00ff66;
+  --color-cyan-dim:       rgba(0, 255, 102, 0.15);
+  --color-cyan-glow:      rgba(0, 255, 102, 0.45);
+  --color-border:         rgba(0, 255, 102, 0.12);
+  --color-border-accent:  rgba(0, 255, 102, 0.4);
+  --color-text-accent:    #00ff66;
+  --color-purple:         #10b981;
+  --color-purple-dim:     rgba(16, 185, 129, 0.15);
+  --color-purple-glow:    rgba(16, 185, 129, 0.4);
+}
+
+/* ── Theme: Crimson Breach (Red Team) ────────────────────────── */
+[data-theme="crimson"] {
+  --color-bg-base:        #0a0305;
+  --color-bg-surface:     #120609;
+  --color-bg-elevated:    #1a090e;
+  --color-bg-card:        #240d14;
+  --color-bg-overlay:     rgba(36, 13, 20, 0.88);
+  --color-cyan:           #ff2a4b;
+  --color-cyan-dim:       rgba(255, 42, 75, 0.18);
+  --color-cyan-glow:      rgba(255, 42, 75, 0.5);
+  --color-border:         rgba(255, 42, 75, 0.12);
+  --color-border-accent:  rgba(255, 42, 75, 0.4);
+  --color-text-accent:    #ff2a4b;
+  --color-purple:         #ff9100;
+  --color-purple-dim:     rgba(255, 145, 0, 0.15);
+  --color-purple-glow:    rgba(255, 145, 0, 0.4);
+}
+
+/* ── Theme: Synthwave 80s Outrun ─────────────────────────────── */
+[data-theme="synthwave"] {
+  --color-bg-base:        #0b0416;
+  --color-bg-surface:     #140826;
+  --color-bg-elevated:    #1d0d38;
+  --color-bg-card:        #29124e;
+  --color-bg-overlay:     rgba(41, 18, 78, 0.88);
+  --color-cyan:           #ff2a85;
+  --color-cyan-dim:       rgba(255, 42, 133, 0.18);
+  --color-cyan-glow:      rgba(255, 42, 133, 0.5);
+  --color-border:         rgba(255, 42, 133, 0.14);
+  --color-border-accent:  rgba(255, 42, 133, 0.45);
+  --color-text-accent:    #ff2a85;
+  --color-purple:         #00f0ff;
+  --color-purple-dim:     rgba(0, 240, 255, 0.15);
+  --color-purple-glow:    rgba(0, 240, 255, 0.4);
+}
+
+/* ── Theme: Quantum Arctic ───────────────────────────────────── */
+[data-theme="quantum"] {
+  --color-bg-base:        #020612;
+  --color-bg-surface:     #060e22;
+  --color-bg-elevated:    #0a1738;
+  --color-bg-card:        #0f2252;
+  --color-bg-overlay:     rgba(15, 34, 82, 0.88);
+  --color-cyan:           #38bdf8;
+  --color-cyan-dim:       rgba(56, 189, 248, 0.18);
+  --color-cyan-glow:      rgba(56, 189, 248, 0.45);
+  --color-border:         rgba(56, 189, 248, 0.12);
+  --color-border-accent:  rgba(56, 189, 248, 0.4);
+  --color-text-accent:    #38bdf8;
+  --color-purple:         #6366f1;
+  --color-purple-dim:     rgba(99, 102, 241, 0.15);
+  --color-purple-glow:    rgba(99, 102, 241, 0.4);
+}
+
+/* ── Theme: Deep Void OLED ───────────────────────────────────── */
+[data-theme="void"] {
+  --color-bg-base:        #000000;
+  --color-bg-surface:     #050507;
+  --color-bg-elevated:    #0a0a0f;
+  --color-bg-card:        #101018;
+  --color-bg-overlay:     rgba(16, 16, 24, 0.92);
+  --color-cyan:           #e2e8f0;
+  --color-cyan-dim:       rgba(226, 232, 240, 0.12);
+  --color-cyan-glow:      rgba(226, 232, 240, 0.35);
+  --color-border:         rgba(255, 255, 255, 0.1);
+  --color-border-accent:  rgba(255, 255, 255, 0.3);
+  --color-text-accent:    #ffffff;
+  --color-purple:         #94a3b8;
+  --color-purple-dim:     rgba(148, 163, 184, 0.15);
+  --color-purple-glow:    rgba(148, 163, 184, 0.35);
 }
 
 /* ── Reset ────────────────────────────────────────────────── */
@@ -218,6 +326,87 @@ body {
   color: var(--color-text-muted);
   letter-spacing: 0.08em;
   font-weight: 500;
+}
+
+/* ── Active Target Indicator ──────────────────────────────── */
+.active-target-indicator {
+  margin: var(--space-3) var(--space-4);
+  padding: var(--space-3) var(--space-3);
+  background: rgba(0, 229, 255, 0.04);
+  border: 1px solid rgba(0, 229, 255, 0.18);
+  border-radius: var(--radius-md);
+  position: relative;
+  overflow: hidden;
+  box-shadow: 0 0 15px rgba(0, 229, 255, 0.05);
+}
+
+.active-target-indicator::before {
+  content: '';
+  position: absolute;
+  top: 0; left: 0; right: 0; height: 1px;
+  background: linear-gradient(90deg, transparent, var(--color-cyan), transparent);
+}
+
+.target-label {
+  font-size: 0.6rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  color: var(--color-cyan);
+  text-transform: uppercase;
+  margin-bottom: 2px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.target-label::before {
+  content: '';
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #00ff88;
+  box-shadow: 0 0 8px #00ff88;
+  animation: pulse-live 2s infinite;
+}
+
+@keyframes pulse-live {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.4; transform: scale(0.8); }
+}
+
+.target-domain {
+  font-family: var(--font-mono);
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: #ffffff;
+  margin-bottom: 6px;
+  letter-spacing: 0.02em;
+}
+
+.target-stats {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 0.68rem;
+  color: var(--color-text-muted);
+  font-family: var(--font-mono);
+  border-top: 1px solid rgba(255, 255, 255, 0.05);
+  padding-top: 6px;
+}
+
+.target-stat-num {
+  font-weight: 700;
+  margin-right: 2px;
+}
+
+.scanner-pulse {
+  animation: scanner-pulse 2.5s ease-in-out infinite;
+}
+
+@keyframes scanner-pulse {
+  0%, 100% { opacity: 0.4; transform: scale(0.98); }
+  50% { opacity: 1; transform: scale(1); filter: drop-shadow(0 0 12px var(--color-cyan)); }
 }
 
 /* ── Mode Selector ────────────────────────────────────────── */

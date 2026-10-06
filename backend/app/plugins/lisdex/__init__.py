@@ -1,0 +1,1 @@
+"""SPAIDER Lisdex Plugin."""
