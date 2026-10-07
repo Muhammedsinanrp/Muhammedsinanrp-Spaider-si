@@ -1,0 +1,9 @@
+{
+  "program": "Example Program Name",
+  "policy_url": "https://example.com/security",
+  "authorized": true,
+  "in_scope_hosts": [
+    "your-authorized-domain.example"
+  ],
+  "out_of_scope_hosts": []
+}
