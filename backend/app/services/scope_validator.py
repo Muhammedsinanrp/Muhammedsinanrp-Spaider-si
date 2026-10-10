@@ -65,16 +65,17 @@ def matches_scope_pattern(target_host: str, pattern: str) -> bool:
     # An URL scope represents one origin. Do not allow changing http<->https
     # or scanning a different port because the hostname happens to match.
     if pattern_has_scheme:
-        if target_has_scheme and target_parsed.scheme.lower() != pattern_parsed.scheme.lower():
+        # URL/origin scopes authorize HTTP(S) testing only, not a bare-host port
+        # scan. Network scanners need a separate domain, IP, or CIDR scope.
+        if not target_has_scheme:
             return False
-        if target_has_scheme:
-            default_port = 443 if target_parsed.scheme.lower() == "https" else 80
-            scope_default_port = 443 if pattern_parsed.scheme.lower() == "https" else 80
-            actual_port = target_port or default_port
-            allowed_port = pattern_port or scope_default_port
-            if actual_port != allowed_port:
-                return False
-        elif pattern_port is not None and target_port != pattern_port:
+        if target_parsed.scheme.lower() != pattern_parsed.scheme.lower():
+            return False
+        default_port = 443 if target_parsed.scheme.lower() == "https" else 80
+        scope_default_port = 443 if pattern_parsed.scheme.lower() == "https" else 80
+        actual_port = target_port or default_port
+        allowed_port = pattern_port or scope_default_port
+        if actual_port != allowed_port:
             return False
     elif pattern_port is not None and target_port != pattern_port:
         return False
