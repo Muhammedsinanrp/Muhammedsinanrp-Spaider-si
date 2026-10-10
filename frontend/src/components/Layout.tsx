@@ -1,5 +1,7 @@
 import { useState, useRef, useEffect } from 'react'
 import { Outlet, useNavigate, useLocation } from 'react-router-dom'
+import { useQuery } from '@tanstack/react-query'
+import { experimentApi, targetApi } from '../api/client'
 import { useStore, CyberTheme } from '../store/useStore'
 import ToolsPanel from './ToolsPanel'
 import HoloViewerModal from './HoloViewerModal'
@@ -40,6 +42,43 @@ export default function Layout() {
   const [themeDropdown, setThemeDropdown] = useState(false)
   const themeDropdownRef = useRef<HTMLDivElement>(null)
 
+  const { data: targets = [] } = useQuery({
+    queryKey: ['layout-targets'],
+    queryFn: () => targetApi.list(),
+    retry: false,
+    refetchInterval: 15000,
+  })
+  const { data: liveMetrics } = useQuery({
+    queryKey: ['layout-live-metrics'],
+    queryFn: () => experimentApi.metrics(),
+    retry: false,
+    refetchInterval: 15000,
+  })
+  const latestTarget = Array.isArray(targets) && targets.length ? targets[0] : null
+  const { data: targetScopes = [] } = useQuery({
+    queryKey: ['layout-target-scopes', latestTarget?.id],
+    queryFn: () => latestTarget ? targetApi.scopes(String(latestTarget.id)) : Promise.resolve([]),
+    enabled: Boolean(latestTarget?.id),
+    retry: false,
+    refetchInterval: 15000,
+  })
+  const now = Date.now()
+  const hasDocumentedScope = Array.isArray(targetScopes) && targetScopes.some((scope: any) =>
+    scope.authorization_status === 'AUTHORIZED' &&
+    scope.active_testing === true &&
+    scope.authorization_document_present === true &&
+    (!scope.valid_from || new Date(scope.valid_from).getTime() <= now) &&
+    (!scope.valid_until || new Date(scope.valid_until).getTime() > now)
+  )
+  const storedUser = (() => {
+    try { return JSON.parse(localStorage.getItem('spaider_user') || '{}') } catch { return {} }
+  })()
+  const handleLogout = () => {
+    localStorage.removeItem('spaider_token')
+    localStorage.removeItem('spaider_user')
+    navigate('/login', { replace: true })
+  }
+
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', theme)
   }, [theme])
@@ -78,14 +117,19 @@ export default function Layout() {
           </div>
         </div>
 
-        {/* Active target indicator */}
+        {/* Live target inventory and platform metrics */}
         <div className="active-target-indicator">
-          <div className="target-label">ACTIVE TARGET</div>
-          <div className="target-domain">example.com</div>
+          <div className="target-label">LATEST REGISTERED TARGET</div>
+          <div className="target-domain" style={{ overflowWrap: 'anywhere' }}>
+            {latestTarget?.hostname || latestTarget?.name || 'No target registered'}
+          </div>
           <div className="target-stats">
-            <span><span className="target-stat-num" style={{ color: '#00e5ff' }}>127</span> Assets</span>
-            <span><span className="target-stat-num" style={{ color: '#a855f7' }}>43</span> APIs</span>
-            <span><span className="target-stat-num" style={{ color: '#ff3b5c' }}>18</span> Vulns</span>
+            <span><span className="target-stat-num" style={{ color: '#00e5ff' }}>{Number(liveMetrics?.assets_discovered || 0)}</span> Assets</span>
+            <span><span className="target-stat-num" style={{ color: '#a855f7' }}>{Number(liveMetrics?.endpoints_discovered || 0)}</span> Endpoints</span>
+            <span><span className="target-stat-num" style={{ color: '#ff3b5c' }}>{Number(liveMetrics?.findings?.total || 0)}</span> Findings</span>
+          </div>
+          <div style={{ fontSize: '0.61rem', color: 'var(--color-text-muted)', marginTop: 4 }}>
+            Platform totals · API-backed
           </div>
         </div>
 
@@ -244,22 +288,32 @@ export default function Layout() {
               <span>⚡ Run Tool</span>
             </button>
 
-            {/* Scope indicator */}
-            <div style={{
-              padding: '4px 12px', borderRadius: 'var(--radius-sm)',
-              fontSize: '0.75rem', fontWeight: 700, letterSpacing: '0.1em',
-              background: 'rgba(0,255,136,0.12)', color: '#00ff88',
-              border: '1px solid rgba(0,255,136,0.4)',
-            }}>
-              ✓ AUTHORIZED SCOPE
+            {/* Scope status reflects a real saved scope, its validity, and its document reference */}
+            <div
+              title={hasDocumentedScope ? 'The latest registered target has an active scope and a document reference.' : 'No active, unexpired documented scope is recorded for the latest registered target.'}
+              style={{
+                padding: '4px 12px', borderRadius: 'var(--radius-sm)',
+                fontSize: '0.7rem', fontWeight: 700, letterSpacing: '0.04em',
+                background: hasDocumentedScope ? 'rgba(0,255,136,0.12)' : 'rgba(255,152,0,0.12)',
+                color: hasDocumentedScope ? '#00ff88' : '#ffb74d',
+                border: `1px solid ${hasDocumentedScope ? 'rgba(0,255,136,0.4)' : 'rgba(255,152,0,0.4)'}`,
+              }}
+            >
+              {hasDocumentedScope ? '✓ DOCUMENTED SCOPE' : '⚠ SCOPE REQUIRED'}
             </div>
 
-            <div style={{
-              width: 32, height: 32, borderRadius: '50%',
-              background: 'linear-gradient(135deg, var(--color-cyan), var(--color-purple))',
-              display: 'flex', alignItems: 'center', justifyContent: 'center',
-              fontSize: '0.875rem', fontWeight: 700, color: '#000', cursor: 'pointer',
-            }}>A</div>
+            <button
+              type="button"
+              onClick={handleLogout}
+              title={`Sign out ${storedUser.username || 'user'}`}
+              aria-label="Sign out"
+              style={{
+                width: 32, height: 32, borderRadius: '50%',
+                background: 'linear-gradient(135deg, var(--color-cyan), var(--color-purple))',
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                fontSize: '0.875rem', fontWeight: 800, color: '#000', cursor: 'pointer',
+                border: 0,
+              }}>{String(storedUser.username || 'U').slice(0, 1).toUpperCase()}</button>
           </div>
         </header>
 
