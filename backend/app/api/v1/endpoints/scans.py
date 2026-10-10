@@ -263,8 +263,16 @@ async def get_experiment_metrics(db: AsyncSession = Depends(get_db)):
         sev_name = f.severity.value if hasattr(f.severity, "value") else str(f.severity)
         sev_counts[sev_name] = sev_counts.get(sev_name, 0) + 1
 
+    scan_jobs_result = await db.execute(select(ScanJob))
+    scan_jobs = scan_jobs_result.scalars().all()
+    targets_scanned = len({
+        str(target)
+        for scan_job in scan_jobs
+        for target in (scan_job.targets or [])
+    })
+
     return {
-        "targets_scanned": max(t_count, 1),
+        "targets_scanned": targets_scanned,
         "scans_executed": scans_total,
         "assets_discovered": a_count,
         "endpoints_discovered": e_count,
