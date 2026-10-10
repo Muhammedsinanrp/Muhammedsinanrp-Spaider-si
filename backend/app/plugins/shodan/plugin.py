@@ -23,8 +23,11 @@ def lookup(query: str, api_key: Optional[str] = None, query_type: str = "host") 
     """Query Shodan for host/search/DNS intelligence."""
     key = api_key or os.getenv("SHODAN_API_KEY", "")
     if not key:
-        logger.warning("No Shodan API key — returning mock data")
-        return _mock_result(query, query_type)
+        return {
+            "error": "Shodan API key is not configured. Set SHODAN_API_KEY or provide an API key for this request.",
+            "configured": False,
+            "authorization_warning": AUTH_WARNING,
+        }
 
     try:
         import shodan as shodan_lib  # pip install shodan
@@ -43,8 +46,11 @@ def lookup(query: str, api_key: Optional[str] = None, query_type: str = "host") 
             return {"error": f"Unknown query type: {query_type}", "authorization_warning": AUTH_WARNING}
 
     except ImportError:
-        logger.warning("shodan library not installed — pip install shodan")
-        return _mock_result(query, query_type)
+        return {
+            "error": "The Shodan Python client is not installed. Install the shodan package in the backend environment.",
+            "configured": bool(key),
+            "authorization_warning": AUTH_WARNING,
+        }
     except Exception as e:
         logger.error("Shodan API error", error=str(e))
         return {"error": str(e), "authorization_warning": AUTH_WARNING}
@@ -91,39 +97,6 @@ def _parse_search(data: dict) -> dict:
     return {
         "total": data.get("total", 0),
         "matches": matches,
-        "authorization_warning": AUTH_WARNING,
-    }
-
-
-def _mock_result(query: str, query_type: str) -> dict:
-    if query_type == "host":
-        return {
-            "ip": query or "8.8.8.8",
-            "org": "Google LLC",
-            "isp": "Google",
-            "country": "United States",
-            "city": "Mountain View",
-            "os": "Linux",
-            "hostnames": ["dns.google"],
-            "domains": ["google.com"],
-            "ports": [53, 443],
-            "vulns": [],
-            "tags": ["cloud"],
-            "last_update": "2024-01-15T10:00:00",
-            "services": [
-                {"port": 53, "transport": "udp", "product": "DNS", "version": "", "banner": ""},
-                {"port": 443, "transport": "tcp", "product": "HTTPS", "version": "TLS 1.3", "banner": ""},
-            ],
-            "mock": True,
-            "authorization_warning": AUTH_WARNING,
-        }
-    return {
-        "total": 2,
-        "matches": [
-            {"ip": "1.2.3.4", "port": 80, "org": "Example ISP", "country": "Germany", "banner": "HTTP/1.1 200 OK"},
-            {"ip": "5.6.7.8", "port": 443, "org": "Another ISP", "country": "France", "banner": "HTTP/1.1 301"},
-        ],
-        "mock": True,
         "authorization_warning": AUTH_WARNING,
     }
 
