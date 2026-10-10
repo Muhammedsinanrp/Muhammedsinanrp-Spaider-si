@@ -29,7 +29,25 @@ async def seed_database(force: bool = False):
         res = await db.execute(select(Target))
         existing_targets = res.scalars().all()
         if existing_targets and not force:
-            logger.info("Database already seeded with targets, skipping.")
+            is_development = settings.environment.lower() in {"development", "dev", "test"}
+            if not settings.spaider_admin_password and not is_development:
+                raise RuntimeError(
+                    "SPAIDER_ADMIN_PASSWORD must be set before using an existing database in production."
+                )
+            # When an administrator password is explicitly configured, apply it
+            # to the seeded admin account on upgrades as well as fresh installs.
+            if settings.spaider_admin_password:
+                admin_result = await db.execute(select(User).where(User.username == "admin"))
+                admin_user = admin_result.scalar_one_or_none()
+                if admin_user:
+                    admin_user.hashed_password = hash_password(settings.spaider_admin_password)
+            if settings.spaider_analyst_password:
+                analyst_result = await db.execute(select(User).where(User.username == "analyst"))
+                analyst_user = analyst_result.scalar_one_or_none()
+                if analyst_user:
+                    analyst_user.hashed_password = hash_password(settings.spaider_analyst_password)
+            await db.commit()
+            logger.info("Database already contains targets; preserved operational records and applied configured password rotation if supplied.")
             return
 
         logger.info("Seeding SPAIDER cyber intelligence platform data...")
