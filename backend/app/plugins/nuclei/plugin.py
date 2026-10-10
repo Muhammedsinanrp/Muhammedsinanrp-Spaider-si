@@ -264,23 +264,31 @@ def _parse_nuclei_output(output_file: str) -> List[Dict]:
                 continue
             try:
                 item = json.loads(line)
-                info = item.get("info", {})
+                info = item.get("info") or {}
+                classification = info.get("classification") or {}
+                def as_list(value):
+                    if value is None:
+                        return []
+                    return value if isinstance(value, list) else [value]
+                matched_url = item.get("matched-at") or item.get("url") or item.get("host") or ""
+                template_id = item.get("template-id") or item.get("templateID") or "nuclei-unknown"
                 findings.append({
-                    "template_id": item.get("template-id", ""),
-                    "title": info.get("name", "Unknown"),
-                    "description": info.get("description", ""),
-                    "severity": severity_map.get(info.get("severity", "info").lower(), "INFO"),
-                    "url": item.get("matched-at", item.get("host", "")),
-                    "cve_ids": info.get("classification", {}).get("cve-id", []),
-                    "cwe_ids": info.get("classification", {}).get("cwe-id", []),
-                    "cvss_score": info.get("classification", {}).get("cvss-score"),
-                    "tags": info.get("tags", []),
-                    "references": info.get("reference", []),
+                    "id": f"{template_id}::{matched_url}",
+                    "template_id": template_id,
+                    "title": info.get("name") or template_id,
+                    "description": info.get("description") or "",
+                    "severity": severity_map.get(str(info.get("severity", "info")).lower(), "INFO"),
+                    "url": matched_url,
+                    "cve_ids": as_list(classification.get("cve-id")),
+                    "cwe_ids": as_list(classification.get("cwe-id")),
+                    "cvss_score": classification.get("cvss-score"),
+                    "tags": as_list(info.get("tags")),
+                    "references": as_list(info.get("reference")),
                     "curl_command": item.get("curl-command", ""),
                     "request": item.get("request", ""),
-                    "response": item.get("response", "")[:500] if item.get("response") else "",
+                    "response": (item.get("response", "") or "")[:500],
                     "matcher_name": item.get("matcher-name", ""),
-                    "extracted_results": item.get("extracted-results", []),
+                    "extracted_results": as_list(item.get("extracted-results")),
                 })
             except json.JSONDecodeError:
                 continue
