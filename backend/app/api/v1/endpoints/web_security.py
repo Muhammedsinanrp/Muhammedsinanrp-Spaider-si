@@ -1,9 +1,4 @@
-"""Scope-checked web scanning endpoints backed by Nuclei task execution.
-
-A scan only starts when each URL belongs to an active, unexpired authorization
-scope. The endpoint supports Celery workers and a local thread fallback for
-development setups without Redis; it never returns simulated findings.
-"""
+"""Scope-checked web scanning endpoints backed by real Nuclei execution."""
 
 import socket
 import threading
@@ -17,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.database import get_db
+from app.models.models import ScanEvent, ScanJob, ScanMode, ScanStatus
 from app.services.scope_validator import validate_target_scope
 from app.workers.celery_app import celery_app
 
@@ -27,8 +23,8 @@ AUTH_WARNING = (
     "Targets must match an active, unexpired SPAIDER scope."
 )
 
-# In-process results are used only when the Redis broker is unavailable.
-# Production deployments should run the dedicated Celery worker.
+# Development fallback when Redis is not reachable. Scan records and findings
+# are still persisted in the database; this dictionary only supports live polling.
 _LOCAL_WEB_SCANS: dict[str, dict] = {}
 _LOCAL_WEB_SCANS_LOCK = threading.Lock()
 
@@ -44,6 +40,7 @@ class WebScanRequest(BaseModel):
 
 class WebScanResponse(BaseModel):
     task_id: str
+    scan_id: str
     status: str
     targets: List[str]
     categories_queued: List[str]
@@ -52,7 +49,7 @@ class WebScanResponse(BaseModel):
 
 
 def _validate_url(target: str) -> str:
-    """Return a normalized URL or reject non-HTTP input."""
+    """Reject malformed/non-HTTP targets before looking up authorization."""
     if not target or target != target.strip() or any(ch.isspace() for ch in target):
         raise HTTPException(status_code=400, detail=f"Invalid target URL: {target!r}")
     parsed = urlsplit(target)
@@ -73,68 +70,63 @@ def _validate_url(target: str) -> str:
 
 
 def _redis_available() -> bool:
-    """Small connection check so local development can work without Redis."""
+    """Check broker TCP connectivity for a local development fallback."""
     import urllib.parse
 
     parsed = urllib.parse.urlparse(settings.redis_url)
     if not parsed.hostname:
         return False
     try:
-        with socket.create_connection(
-            (parsed.hostname, parsed.port or 6379), timeout=0.4
-        ):
+        with socket.create_connection((parsed.hostname, parsed.port or 6379), timeout=0.4):
             return True
     except OSError:
         return False
 
 
 def _run_local_web_scan(
-    task_id: str,
+    scan_id: str,
     targets: List[str],
     categories: List[str],
     rate_limit: int,
     timeout: int,
     proxy: Optional[str],
 ) -> None:
-    """Execute the Celery task in a background thread for local development."""
+    """Run actual scanner in a development thread if Redis is offline."""
     with _LOCAL_WEB_SCANS_LOCK:
-        _LOCAL_WEB_SCANS[task_id]["status"] = "STARTED"
+        _LOCAL_WEB_SCANS[scan_id] = {"status": "STARTED", "result": None}
     try:
         from app.workers.tasks import run_web_security_scan
 
         result = run_web_security_scan(
-            targets, categories, rate_limit=rate_limit, timeout=timeout, proxy=proxy
+            targets, categories, rate_limit=rate_limit, timeout=timeout,
+            proxy=proxy, scan_id=scan_id,
         )
+        status = "FAILURE" if isinstance(result, dict) and result.get("error") else "SUCCESS"
         with _LOCAL_WEB_SCANS_LOCK:
-            _LOCAL_WEB_SCANS[task_id]["result"] = result
-            _LOCAL_WEB_SCANS[task_id]["status"] = (
-                "FAILURE" if isinstance(result, dict) and result.get("error") else "SUCCESS"
-            )
+            _LOCAL_WEB_SCANS[scan_id] = {"status": status, "result": result}
     except Exception as exc:
         with _LOCAL_WEB_SCANS_LOCK:
-            _LOCAL_WEB_SCANS[task_id]["result"] = {"error": str(exc), "findings": []}
-            _LOCAL_WEB_SCANS[task_id]["status"] = "FAILURE"
+            _LOCAL_WEB_SCANS[scan_id] = {
+                "status": "FAILURE", "result": {"error": str(exc), "findings": []}
+            }
 
 
 @router.post("/scan", response_model=WebScanResponse)
 async def launch_web_scan(payload: WebScanRequest, db: AsyncSession = Depends(get_db)):
-    """Queue a real Nuclei scan after validating every target against saved scope."""
+    """Create a persistent scan record and dispatch only after scope validation."""
     normalized_targets = list(dict.fromkeys(_validate_url(t) for t in payload.targets))
     from app.plugins.nuclei.plugin import WEB_VULN_CATEGORIES
 
     categories = payload.categories or list(WEB_VULN_CATEGORIES.keys())
     if not categories:
         raise HTTPException(status_code=400, detail="Select at least one scan category.")
-    unknown_categories = sorted(set(categories) - set(WEB_VULN_CATEGORIES))
-    if unknown_categories:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Unknown scan category: {', '.join(unknown_categories)}",
-        )
+    unknown = sorted(set(categories) - set(WEB_VULN_CATEGORIES))
+    if unknown:
+        raise HTTPException(status_code=400, detail=f"Unknown scan category: {', '.join(unknown)}")
 
     if payload.proxy:
-        proxy = urlsplit(payload.proxy)
-        if proxy.scheme not in {"http", "https", "socks5"} or not proxy.hostname:
+        parsed_proxy = urlsplit(payload.proxy)
+        if parsed_proxy.scheme not in {"http", "https", "socks5"} or not parsed_proxy.hostname:
             raise HTTPException(
                 status_code=400,
                 detail="Proxy must be a valid http://, https://, or socks5:// URL.",
@@ -142,62 +134,81 @@ async def launch_web_scan(payload: WebScanRequest, db: AsyncSession = Depends(ge
 
     matched_scope_id = payload.scope_id
     for target in normalized_targets:
-        authorized, reason, matched_scope = await validate_target_scope(
-            target, db, payload.scope_id
-        )
+        authorized, reason, matched_scope = await validate_target_scope(target, db, payload.scope_id)
         if not authorized:
             raise HTTPException(status_code=403, detail=f"AUTHORIZATION ERROR: {reason}")
         if matched_scope and not matched_scope_id:
             matched_scope_id = str(matched_scope.id)
 
-    task_args = [
-        normalized_targets,
-        categories,
-        payload.rate_limit,
-        payload.timeout,
-        payload.proxy,
-    ]
+    scan_id = str(uuid.uuid4())
+    job = ScanJob(
+        id=scan_id,
+        name=f"Web Security Scan — {normalized_targets[0][:180]}",
+        mode=ScanMode.RED,
+        plugin="nuclei",
+        targets=normalized_targets,
+        options={
+            "web_scan": True,
+            "web_categories": categories,
+            "rate_limit": payload.rate_limit,
+            "timeout": payload.timeout,
+            "proxy": payload.proxy,
+            "profile": "safe",
+            "scan_type": "web",
+        },
+        scope_id=matched_scope_id,
+        status=ScanStatus.PENDING,
+        progress=0,
+    )
+    db.add(job)
+    db.add(ScanEvent(
+        id=str(uuid.uuid4()),
+        scan_job_id=scan_id,
+        stage="TARGET AUTHORIZATION",
+        progress=5,
+        message="All targets matched an active authorized scope.",
+        data={"targets": normalized_targets, "categories": categories, "scope_id": matched_scope_id},
+    ))
+    await db.commit()
 
+    task_id = scan_id
+    queue_message = "Scan started in local development mode."
     if _redis_available():
         try:
             task = celery_app.send_task(
                 "app.workers.tasks.run_web_security_scan",
-                args=task_args,
+                args=[
+                    normalized_targets, categories, payload.rate_limit,
+                    payload.timeout, payload.proxy, scan_id,
+                ],
                 queue="red_queue",
             )
+            task_id = task.id
+            job.celery_task_id = task.id
+            await db.commit()
+            queue_message = "Authorized web scan queued for a Celery worker."
             return WebScanResponse(
-                task_id=task.id,
-                status="queued",
-                targets=normalized_targets,
-                categories_queued=categories,
-                message=(
-                    f"Authorized scan queued for {len(normalized_targets)} target(s) "
-                    f"across {len(categories)} categories."
-                ),
+                task_id=task_id, scan_id=scan_id, status="queued",
+                targets=normalized_targets, categories_queued=categories,
+                message=queue_message,
             )
-        except Exception:
-            # Fall through to the local runner if the broker is unavailable.
-            pass
+        except Exception as exc:
+            queue_message = f"Redis dispatch failed; using local runner ({type(exc).__name__})."
 
-    task_id = f"local-{uuid.uuid4()}"
-    with _LOCAL_WEB_SCANS_LOCK:
-        _LOCAL_WEB_SCANS[task_id] = {"status": "PENDING", "result": None}
+    job.status = ScanStatus.RUNNING
+    job.started_at = __import__("datetime").datetime.utcnow()
+    await db.commit()
     thread = threading.Thread(
         target=_run_local_web_scan,
-        args=(task_id, *task_args),
+        args=(scan_id, normalized_targets, categories, payload.rate_limit, payload.timeout, payload.proxy),
         daemon=True,
-        name=f"spaider-web-scan-{task_id[-8:]}",
+        name=f"spaider-web-{scan_id[:8]}",
     )
     thread.start()
     return WebScanResponse(
-        task_id=task_id,
-        status="queued",
-        targets=normalized_targets,
-        categories_queued=categories,
-        message=(
-            f"Authorized local scan started for {len(normalized_targets)} target(s) "
-            f"across {len(categories)} categories."
-        ),
+        task_id=task_id, scan_id=scan_id, status="queued",
+        targets=normalized_targets, categories_queued=categories,
+        message=queue_message,
     )
 
 
@@ -210,22 +221,20 @@ async def get_categories():
 
 @router.get("/scan/{task_id}/status")
 async def scan_status(task_id: str):
-    """Return the actual state and result for a queued or locally executed scan."""
-    if task_id.startswith("local-"):
-        with _LOCAL_WEB_SCANS_LOCK:
-            state = _LOCAL_WEB_SCANS.get(task_id)
-            if state is None:
-                raise HTTPException(status_code=404, detail="Local scan job not found.")
-            return {
-                "task_id": task_id,
-                "status": state["status"],
-                "result": state["result"],
-                "authorization_warning": AUTH_WARNING,
-            }
+    """Poll live scanner state and its actual structured result."""
+    with _LOCAL_WEB_SCANS_LOCK:
+        local = _LOCAL_WEB_SCANS.get(task_id)
+    if local is not None:
+        return {
+            "task_id": task_id,
+            "status": local["status"],
+            "result": local["result"],
+            "authorization_warning": AUTH_WARNING,
+        }
 
     task = celery_app.AsyncResult(task_id)
     result = task.result if task.ready() else None
-    if task.ready() and task.failed():
+    if task.failed():
         result = {"error": str(task.result), "findings": []}
     return {
         "task_id": task_id,
@@ -236,8 +245,7 @@ async def scan_status(task_id: str):
 
 
 async def _persist_proxy_findings(db: AsyncSession, source: str, findings: list) -> int:
-    """Store Burp/Caido findings so integrations do not merely acknowledge them."""
-    import uuid as uuid_module
+    """Persist findings imported from Burp or Caido instead of just acknowledging."""
     from app.models.models import Finding, Severity
 
     severity_map = {
@@ -253,18 +261,16 @@ async def _persist_proxy_findings(db: AsyncSession, source: str, findings: list)
         if not isinstance(item, dict):
             continue
         title = item.get("title") or item.get("issueName") or "Imported proxy finding"
-        severity_raw = str(item.get("severity", "INFO")).upper()
-        severity = severity_map.get(severity_raw, Severity.INFO)
+        severity = severity_map.get(str(item.get("severity", "INFO")).upper(), Severity.INFO)
         url = item.get("url") or item.get("matched_at") or ""
-        template_id = item.get("template_id") or item.get("type") or None
         finding = Finding(
-            id=str(uuid_module.uuid4()),
+            id=str(uuid.uuid4()),
             title=str(title)[:512],
             description=str(item.get("description") or item.get("issueDetail") or ""),
             severity=severity,
             plugin=source,
             scanner=source,
-            template_id=str(template_id)[:128] if template_id else None,
+            template_id=str(item.get("template_id") or item.get("type") or "")[:128] or None,
             asset_value=urlsplit(url).hostname if url else None,
             endpoint=str(url)[:1024] if url else None,
             affected_url=str(url)[:1024] if url else None,
@@ -287,12 +293,10 @@ async def _persist_proxy_findings(db: AsyncSession, source: str, findings: list)
 @router.post("/burp/sync")
 async def burp_sync(findings: list, db: AsyncSession = Depends(get_db)):
     """Persist findings received from the SPAIDER Burp extension."""
-    stored = await _persist_proxy_findings(db, "burp", findings)
-    return {"synced": stored, "status": "ok"}
+    return {"synced": await _persist_proxy_findings(db, "burp", findings), "status": "ok"}
 
 
 @router.post("/caido/sync")
 async def caido_sync(findings: list, db: AsyncSession = Depends(get_db)):
     """Persist findings received from Caido Automate."""
-    stored = await _persist_proxy_findings(db, "caido", findings)
-    return {"synced": stored, "status": "ok"}
+    return {"synced": await _persist_proxy_findings(db, "caido", findings), "status": "ok"}
