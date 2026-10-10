@@ -36,7 +36,7 @@ const SEV_BG: Record<string, string> = {
 
 export default function WebSecurity() {
   const [targets, setTargets] = useState('')
-  const [selected, setSelected] = useState<string[]>(VULN_CATEGORIES.map(c => c.id))
+  const [selected, setSelected] = useState<string[]>(['cves', 'misconfig', 'exposures'])
   const [findings, setFindings] = useState<any[]>([])
   const [scanning, setScanning] = useState(false)
   const [detailFinding, setDetailFinding] = useState<any>(null)
