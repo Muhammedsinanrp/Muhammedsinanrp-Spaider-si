@@ -9,7 +9,7 @@ type RawNode = {
   ip?: string
   os?: string
   criticality?: string
-  services?: Array<{ port?: number; name?: string; product?: string; version?: string }>
+  services?: Array<{ port?: number; protocol?: string; name?: string; product?: string; version?: string }>
 }
 type GraphNode = {
   id: string
