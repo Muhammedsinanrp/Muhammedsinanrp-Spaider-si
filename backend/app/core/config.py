@@ -12,6 +12,7 @@ class Settings(BaseSettings):
     secret_key: str = Field(default="changeme", env="SECRET_KEY")
     algorithm: str = "HS256"
     access_token_expire_minutes: int = 60 * 24  # 24 hours
+    allow_self_registration: bool = Field(default=False, env="ALLOW_SELF_REGISTRATION")
 
     # ── Database ───────────────────────────────────────────────────────────
     # Default: SQLite for local dev. Set DATABASE_URL in .env for PostgreSQL.
