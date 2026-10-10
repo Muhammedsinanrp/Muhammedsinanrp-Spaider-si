@@ -168,7 +168,7 @@ def scan_web(
     templates = list(dict.fromkeys(templates))
 
     command = [
-        nuclei_path, "-json-export", output_file, "-silent", "-no-color",
+        nuclei_path, "-jsonl-export", output_file, "-silent", "-no-color", "-no-interactsh",
         "-severity", "critical,high,medium,low,info",
         "-rate-limit", str(max(1, min(int(rate_limit), 100))),
         "-timeout", str(max(1, min(int(timeout), 60))),
