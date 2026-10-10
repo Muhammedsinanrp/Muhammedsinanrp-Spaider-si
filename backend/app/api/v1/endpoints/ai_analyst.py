@@ -107,9 +107,18 @@ async def analyze(payload: AnalysisRequest, db: AsyncSession = Depends(get_db)):
 
 @router.post("/query")
 async def natural_language_query(query: str, db: AsyncSession = Depends(get_db)):
-    """Answer security questions in natural language."""
-    result = await ai_core.query(question=query, db=db)
-    return {"answer": result}
+    """Answer security questions using the configured AI provider."""
+    try:
+        result = await ai_core.query(question=query, db=db)
+        return {"answer": result, "source": "configured_llm"}
+    except RuntimeError as exc:
+        message = str(exc)
+        logger.warning("AI query unavailable or failed", error=message)
+        status_code = 503 if "unavailable" in message.lower() or "configure" in message.lower() else 502
+        raise HTTPException(status_code=status_code, detail=message)
+    except Exception as exc:
+        logger.exception("AI query failed", error=str(exc))
+        raise HTTPException(status_code=502, detail="AI query failed using the configured provider.")
 
 
 @router.get("/dashboard-summary")
