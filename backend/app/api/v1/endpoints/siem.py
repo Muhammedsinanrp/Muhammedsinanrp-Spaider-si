@@ -13,6 +13,7 @@ from app.models.models import Alert, AlertStatus, Severity
 from app.core.websocket_manager import ws_manager
 
 router = APIRouter()
+LEGACY_DEMO_ALERT_IDS = ("alt-001", "alt-002", "alt-003", "alt-004")
 
 
 # ─── Schema ───────────────────────────────────────────────────────────────────
@@ -54,21 +55,33 @@ class AlertOut(BaseModel):
 
 @router.get("/status")
 async def siem_status(db: AsyncSession = Depends(get_db)):
-    """Return SIEM connection status and alert counts."""
-    total = await db.execute(select(func.count(Alert.id)))
-    open_count = await db.execute(
-        select(func.count(Alert.id)).where(Alert.status == AlertStatus.OPEN)
+    """Report observed alert sources, not hard-coded sensor connectivity."""
+    def count_query(*conditions):
+        return select(func.count(Alert.id)).where(*conditions)
+
+    total = await db.execute(count_query(Alert.id.notin_(LEGACY_DEMO_ALERT_IDS)))
+    open_count = await db.execute(count_query(
+        Alert.id.notin_(LEGACY_DEMO_ALERT_IDS), Alert.status == AlertStatus.OPEN
+    ))
+    critical_count = await db.execute(count_query(
+        Alert.id.notin_(LEGACY_DEMO_ALERT_IDS), Alert.severity == Severity.CRITICAL
+    ))
+    sources_result = await db.execute(
+        select(Alert.source).where(
+            Alert.id.notin_(LEGACY_DEMO_ALERT_IDS),
+            Alert.source.is_not(None),
+        ).distinct()
     )
-    critical_count = await db.execute(
-        select(func.count(Alert.id)).where(Alert.severity == Severity.CRITICAL)
-    )
+    observed_sources = sorted({str(source).lower() for (source,) in sources_result.all() if source})
+    total_value = int(total.scalar() or 0)
     return {
-        "connected_sources": ["wazuh", "zeek", "suricata"],
-        "status": "active",
-        "total_alerts": total.scalar(),
-        "open_alerts": open_count.scalar(),
-        "critical_alerts": critical_count.scalar(),
+        "observed_sources": observed_sources,
+        "status": "data_observed" if observed_sources else "no_data",
+        "total_alerts": total_value,
+        "open_alerts": int(open_count.scalar() or 0),
+        "critical_alerts": int(critical_count.scalar() or 0),
         "last_check": datetime.utcnow().isoformat(),
+        "note": "Observed sources are inferred from stored alert records; sensor health is not verified by this endpoint.",
     }
 
 
@@ -186,7 +199,7 @@ async def alert_timeline(
     # Build a manual hourly bucket (SQLite compatible)
     result = await db.execute(
         select(Alert.created_at, Alert.severity)
-        .where(Alert.created_at >= since)
+        .where(Alert.created_at >= since, Alert.id.notin_(LEGACY_DEMO_ALERT_IDS))
         .order_by(Alert.created_at)
     )
     rows = result.all()
@@ -212,13 +225,13 @@ async def siem_stats(db: AsyncSession = Depends(get_db)):
     stats = {}
     for sev in Severity:
         result = await db.execute(
-            select(func.count(Alert.id)).where(Alert.severity == sev)
+            select(func.count(Alert.id)).where(Alert.severity == sev, Alert.id.notin_(LEGACY_DEMO_ALERT_IDS))
         )
         stats[sev.value] = result.scalar()
 
     by_source = {}
     result = await db.execute(
-        select(Alert.source, func.count(Alert.id)).group_by(Alert.source)
+        select(Alert.source, func.count(Alert.id)).where(Alert.id.notin_(LEGACY_DEMO_ALERT_IDS)).group_by(Alert.source)
     )
     for source, count in result.all():
         by_source[source or "unknown"] = count
