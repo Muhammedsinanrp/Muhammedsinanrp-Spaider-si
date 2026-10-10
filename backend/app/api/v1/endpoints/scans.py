@@ -249,10 +249,10 @@ async def get_experiment_metrics(db: AsyncSession = Depends(get_db)):
 
     # Targets & assets
     t_count = (await db.execute(select(func.count(Target.id)))).scalar() or 0
-    a_count = (await db.execute(select(func.count(Asset.id)))).scalar() or 0
+    a_count = (await db.execute(select(func.count(Asset.id)).where(Asset.id.notin_(LEGACY_DEMO_ASSET_IDS)))).scalar() or 0
     e_count = (await db.execute(select(func.count(Endpoint.id)))).scalar() or 0
-    s_count = (await db.execute(select(func.count(Service.id)))).scalar() or 0
-    scans_total = (await db.execute(select(func.count(ScanJob.id)))).scalar() or 0
+    s_count = (await db.execute(select(func.count(Service.id)).where(Service.id.notin_(LEGACY_DEMO_SERVICE_IDS)))).scalar() or 0
+    scans_total = (await db.execute(select(func.count(ScanJob.id)).where(ScanJob.id.notin_(LEGACY_DEMO_SCAN_IDS)))).scalar() or 0
 
     # Findings metrics
     all_findings_res = await db.execute(select(Finding).where(Finding.id.notin_(LEGACY_DEMO_FINDING_IDS)))
@@ -268,7 +268,7 @@ async def get_experiment_metrics(db: AsyncSession = Depends(get_db)):
         sev_name = f.severity.value if hasattr(f.severity, "value") else str(f.severity)
         sev_counts[sev_name] = sev_counts.get(sev_name, 0) + 1
 
-    scan_jobs_result = await db.execute(select(ScanJob))
+    scan_jobs_result = await db.execute(select(ScanJob).where(ScanJob.id.notin_(LEGACY_DEMO_SCAN_IDS)))
     scan_jobs = scan_jobs_result.scalars().all()
     targets_scanned = len({
         str(target)
