@@ -1,25 +1,6 @@
 import { useQuery } from '@tanstack/react-query'
 import { pluginApi } from '../api/client'
 
-const MOCK_PLUGINS = [
-  { name:'nmap', version:'7.94', category:'Network Discovery', enabled:true, icon:'📡', description:'Network scanner — port scanning, OS detection, service fingerprinting' },
-  { name:'zingela', version:'1.2.0', category:'Network Discovery', enabled:true, icon:'🎯', description:'Stateless mass TCP/UDP port scanner in Zig — line-rate SYN scanning with SipHash & AF_XDP' },
-  { name:'nuclei', version:'3.2.4', category:'Web/API Security', enabled:true, icon:'⚡', description:'Template-based vulnerability scanner with 8000+ community templates' },
-  { name:'lisdex', version:'2.1.0', category:'Endpoint Audit', enabled:true, icon:'🐧', description:'Linux security & exploit indexer — SUID binaries, kernel CVEs, capabilities, and privesc paths' },
-  { name:'cre', version:'1.4.0', category:'Governance & Compliance', enabled:true, icon:'📚', description:'OWASP OpenCRE — cross-framework mapping for NIST 800-53, ISO 27001, ASVS, and CWE' },
-  { name:'fwrule', version:'1.8.0', category:'Defensive Hardening', enabled:true, icon:'🛡️', description:'Automated firewall rule synthesizer & policy enforcement for iptables, nftables, UFW, pf, and AWS' },
-  { name:'zeek', version:'6.0.0', category:'Network Detection', enabled:true, icon:'🕸️', description:'Network analysis framework — structured logs for DNS, HTTP, TLS, conn' },
-  { name:'suricata', version:'7.0.3', category:'IDS/IPS', enabled:true, icon:'🛡️', description:'High-performance network threat detection engine with rule support' },
-  { name:'wazuh', version:'4.8.0', category:'SIEM/EDR', enabled:false, icon:'🔍', description:'Open-source security platform — SIEM, XDR, compliance' },
-  { name:'yara', version:'4.5.1', category:'Malware Detection', enabled:true, icon:'🦠', description:'Pattern matching for malware researchers — rules engine' },
-  { name:'shodan', version:'1.0.0', category:'OSINT', enabled:true, icon:'🌐', description:'Internet-wide host intelligence — open ports, banners, CVEs, and exposures' },
-  { name:'virustotal', version:'3.0.0', category:'Threat Intel', enabled:true, icon:'🦠', description:'Multi-engine AV and reputation analysis across 70+ security vendors' },
-  { name:'wifite', version:'2.7.0', category:'Wireless Security', enabled:true, icon:'📶', description:'Automated wireless network auditing — WPS, WPA/WPA2 handshakes, PMKID, and Evil Twin' },
-  { name:'burp', version:'2024.5', category:'Web Proxy', enabled:false, icon:'🔥', description:'Industry-standard web security testing tool — Montoya API integration' },
-  { name:'caido', version:'0.42', category:'Web Proxy', enabled:false, icon:'🌊', description:'Modern web proxy with Automate fuzzing and AI-powered analysis' },
-  { name:'godseye', version:'2024', category:'Global Intel', enabled:true, icon:'👁️', description:'AI-powered global intelligence — satellite, maritime, flight, CCTV, and live incident feeds' },
-]
-
 const CATEGORY_COLORS: Record<string,string> = {
   'Network Discovery':'var(--color-cyan)', 'Web/API Security':'var(--color-blue)',
   'Network Detection':'var(--color-purple)', 'IDS/IPS':'var(--color-red)',
@@ -31,22 +12,29 @@ const CATEGORY_COLORS: Record<string,string> = {
 }
 
 export default function Plugins() {
-  const { data: plugins = MOCK_PLUGINS } = useQuery({
-    queryKey:['plugins'], queryFn:()=>pluginApi.list(), retry:false, placeholderData:MOCK_PLUGINS,
+  const { data: pluginData, isLoading, isError, error } = useQuery({
+    queryKey: ['plugins'],
+    queryFn: () => pluginApi.list(),
+    retry: false,
+    refetchInterval: 30000,
   })
-
-  const categories = [...new Set((plugins as any[]).map((p:any)=>p.category))]
+  const plugins: any[] = Array.isArray(pluginData) ? pluginData : []
+  const categories = [...new Set(plugins.map((p: any) => p.category).filter(Boolean))]
+  const readyCount = plugins.filter((p: any) => p.status === 'ready' || p.enabled).length
+  const configCount = plugins.filter((p: any) => p.status === 'configuration_required').length
+  const externalCount = plugins.filter((p: any) => p.status === 'external').length
+  const unavailableCount = plugins.filter((p: any) => p.status === 'not_installed').length
 
   return (
     <div>
       <div className="page-header">
         <div>
           <h1 className="page-title gradient-text-cyan">🔌 Plugin Marketplace</h1>
-          <p className="page-subtitle">Security engine integrations — each plugin exposes discover · scan · analyze · normalize · report</p>
+          <p className="page-subtitle">Tool catalogue with runtime dependency checks from the backend environment.</p>
         </div>
         <div className="flex gap-2">
-          <span className="badge badge-safe">{(plugins as any[]).filter((p:any)=>p.enabled).length} active</span>
-          <span className="badge badge-info">{(plugins as any[]).filter((p:any)=>!p.enabled).length} available</span>
+          <span className="badge badge-safe">${readyCount} ready</span>
+          <span className="badge badge-info">${configCount + unavailableCount} need setup</span>
         </div>
       </div>
 
@@ -56,7 +44,7 @@ export default function Plugins() {
           { label:'Active Plugins', value:(plugins as any[]).filter((p:any)=>p.enabled).length, icon:'✅', color:'var(--color-safe)' },
           { label:'Categories', value:categories.length, icon:'📁', color:'var(--color-cyan)' },
           { label:'Available', value:(plugins as any[]).filter((p:any)=>!p.enabled).length, icon:'⚙️', color:'var(--color-blue)' },
-          { label:'Total', value:(plugins as any[]).length, icon:'🔌', color:'var(--color-purple)' },
+          { label:'Total', value:plugins.length, icon:'🔌', color:'var(--color-purple)' },
         ].map(s=>(
           <div key={s.label} className="stat-card" style={{ '--card-accent':s.color } as any}>
             <div className="stat-icon">{s.icon}</div>
@@ -66,20 +54,35 @@ export default function Plugins() {
         ))}
       </div>
 
-      {/* Plugin SDK info */}
-      <div className="card mb-6" style={{ background:'linear-gradient(135deg, rgba(0,229,255,0.05), rgba(168,85,247,0.05))', border:'1px solid var(--color-border-accent)' }}>
-        <div className="card-header"><span className="card-title">Plugin SDK</span></div>
+      <div className="card mb-6" style={{ background:'linear-gradient(135deg, rgba(0,229,255,0.04), rgba(168,85,247,0.04))', border:'1px solid var(--color-border-accent)' }}>
+        <div className="card-header"><span className="card-title">Runtime Integration Status</span></div>
         <div className="grid-3" style={{ gap:'var(--space-4)' }}>
-          {['discover()','scan()','analyze()','collect()','normalize()','report()'].map(fn=>(
-            <div key={fn} style={{ padding:'var(--space-3)', background:'rgba(255,255,255,0.04)', borderRadius:'var(--radius-md)', border:'1px solid var(--color-border)' }}>
-              <code style={{ fontFamily:'var(--font-mono)', color:'var(--color-cyan)', fontSize:'0.875rem' }}>{fn}</code>
+          {[
+            { label:'Ready in this environment', value:readyCount, color:'var(--color-safe)' },
+            { label:'Configuration required', value:configCount, color:'var(--color-medium)' },
+            { label:'External / not executed here', value:externalCount, color:'var(--color-purple)' },
+          ].map(item => (
+            <div key={item.label} style={{ padding:'var(--space-3)', background:'rgba(255,255,255,0.03)', borderRadius:'var(--radius-md)', border:'1px solid var(--color-border)' }}>
+              <div style={{ fontSize:'1.4rem', fontWeight:800, color:item.color }}>{item.value}</div>
+              <div style={{ fontSize:'0.75rem', color:'var(--color-text-muted)' }}>{item.label}</div>
             </div>
           ))}
         </div>
-        <div style={{ marginTop:'var(--space-4)', fontSize:'0.875rem', color:'var(--color-text-muted)' }}>
-          Every plugin implements these 6 standard methods. Add new security tools without modifying the core platform.
+        <div style={{ marginTop:'var(--space-4)', fontSize:'0.8rem', color:'var(--color-text-muted)' }}>
+          The API checks installed executables, Python dependencies and environment configuration. External tools and setup guidance are not reported as executed scans.
         </div>
       </div>
+
+      {isLoading && <div className="card mb-6" style={{ color:'var(--color-text-muted)' }}>Checking installed tools and integrations…</div>}
+      {isError && <div className="card mb-6" role="alert" style={{ color:'var(--color-high)' }}>
+        Could not load plugin status from the backend. Start the API and refresh this page.
+        <div style={{ fontSize:'0.75rem', marginTop:6 }}>{String((error as any)?.message || '')}</div>
+      </div>}
+      {!isLoading && !isError && plugins.length === 0 && (
+        <div className="card mb-6" style={{ textAlign:'center', padding:'var(--space-8)', color:'var(--color-text-muted)' }}>
+          The backend did not report any registered plugins.
+        </div>
+      )}
 
       {/* Plugin cards by category */}
       {categories.map(cat => (
@@ -89,19 +92,23 @@ export default function Plugins() {
             <span style={{ fontSize:'0.75rem', fontWeight:700, color:CATEGORY_COLORS[cat]||'var(--color-cyan)', textTransform:'uppercase', letterSpacing:'0.1em' }}>{cat}</span>
           </div>
           <div className="grid-3">
-            {(plugins as any[]).filter((p:any)=>p.category===cat).map((p:any)=>(
+            {plugins.filter((p:any)=>p.category===cat).map((p:any)=>(
               <div key={p.name} className="plugin-card">
                 <div className="plugin-icon" style={{ fontSize:'1.5rem' }}>{p.icon}</div>
                 <div className="plugin-info">
                   <div className="plugin-name">{p.name}</div>
-                  <div className="plugin-version">v{p.version}</div>
+                  <div className="plugin-version">{p.version || 'version not detected'}</div>
                   <div style={{ fontSize:'0.7rem', color:'var(--color-text-muted)', marginTop:4, lineHeight:1.4 }}>{p.description}</div>
                 </div>
                 <div style={{ display:'flex', flexDirection:'column', gap:'var(--space-2)', alignItems:'flex-end' }}>
-                  <span className={`plugin-status ${p.enabled?'enabled':'disabled'}`}>
-                    {p.enabled?'Enabled':'Disabled'}
+                  <span className={`plugin-status ${p.enabled ? 'enabled' : 'disabled'}`}>
+                    {p.status === 'external' ? 'External' :
+                     p.status === 'configuration_required' ? 'Needs configuration' :
+                     p.enabled ? 'Ready' : 'Unavailable'}
                   </span>
-                  <button className="btn btn-sm btn-ghost">{p.enabled?'Configure':'Enable'}</button>
+                  <span title={p.reason || ''} style={{ fontSize:'0.65rem', color:'var(--color-text-muted)', maxWidth:160, textAlign:'right' }}>
+                    {p.reason || ''}
+                  </span>
                 </div>
               </div>
             ))}
