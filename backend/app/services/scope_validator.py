@@ -38,26 +38,69 @@ def is_ip_in_network(ip_str: str, net_str: str) -> bool:
 
 
 def matches_scope_pattern(target_host: str, pattern: str) -> bool:
-    """Check if host matches scope rule (domain, wildcard, IP, CIDR)."""
-    pattern_clean = pattern.strip()
-    pattern_host = extract_host(pattern_clean)
+    """Match a target URL/host against a scope entry.
 
-    # Exact host match
-    if target_host.lower() == pattern_host.lower():
+    URL-shaped scope entries constrain scheme and explicit port as well as host.
+    Plain domain and CIDR entries retain their host/subdomain/network semantics.
+    A URL path in the scope acts as a path prefix.
+    """
+    target_raw = str(target_host).strip()
+    pattern_clean = str(pattern).strip()
+    if not target_raw or not pattern_clean:
+        return False
+
+    target_has_scheme = "://" in target_raw
+    pattern_has_scheme = "://" in pattern_clean
+    try:
+        target_parsed = urllib.parse.urlsplit(target_raw if target_has_scheme else f"//{target_raw}")
+        pattern_parsed = urllib.parse.urlsplit(pattern_clean if pattern_has_scheme else f"//{pattern_clean}")
+        target_port = target_parsed.port
+        pattern_port = pattern_parsed.port
+    except ValueError:
+        return False
+
+    target_name = (target_parsed.hostname or extract_host(target_raw)).lower().rstrip(".")
+    pattern_name = (pattern_parsed.hostname or extract_host(pattern_clean)).lower().rstrip(".")
+
+    # An URL scope represents one origin. Do not allow changing http<->https
+    # or scanning a different port because the hostname happens to match.
+    if pattern_has_scheme:
+        if target_has_scheme and target_parsed.scheme.lower() != pattern_parsed.scheme.lower():
+            return False
+        if target_has_scheme:
+            default_port = 443 if target_parsed.scheme.lower() == "https" else 80
+            scope_default_port = 443 if pattern_parsed.scheme.lower() == "https" else 80
+            actual_port = target_port or default_port
+            allowed_port = pattern_port or scope_default_port
+            if actual_port != allowed_port:
+                return False
+        elif pattern_port is not None and target_port != pattern_port:
+            return False
+    elif pattern_port is not None and target_port != pattern_port:
+        return False
+
+    # If the scope entry includes a non-root path, limit the target to it.
+    scope_path = pattern_parsed.path.rstrip("/")
+    if pattern_has_scheme and scope_path:
+        target_path = (target_parsed.path or "/").rstrip("/")
+        if target_path != scope_path and not target_path.startswith(scope_path + "/"):
+            return False
+
+    # Exact host match.
+    if target_name == pattern_name:
         return True
 
-    # Wildcard domain match (*.example.com)
-    if pattern_host.startswith("*."):
-        suffix = pattern_host[1:].lower()
-        if target_host.lower().endswith(suffix):
-            return True
+    # Wildcard domains (*.example.com).
+    if pattern_name.startswith("*."):
+        suffix = pattern_name[1:]
+        return target_name.endswith(suffix) and target_name != pattern_name[2:]
 
-    # Subdomain match if pattern is a root domain
-    if target_host.lower().endswith("." + pattern_host.lower()):
+    # A bare root domain permits its subdomains.
+    if target_name.endswith("." + pattern_name):
         return True
 
-    # IP / CIDR check
-    if is_ip_in_network(target_host, pattern_clean):
+    # IP address and CIDR scopes.
+    if is_ip_in_network(target_name, pattern_clean):
         return True
 
     return False
@@ -91,18 +134,18 @@ class ScopeValidator:
 
         # Check excluded
         for excl in scope.excluded_targets or []:
-            if matches_scope_pattern(target_host, str(excl)):
+            if matches_scope_pattern(target_input, str(excl)):
                 return False, f"Target '{target_input}' is explicitly excluded in scope '{scope.name}'"
 
         # Check allowed targets
         matched = False
         for allowed in scope.targets or []:
-            if matches_scope_pattern(target_host, str(allowed)):
+            if matches_scope_pattern(target_input, str(allowed)):
                 matched = True
                 break
 
         if not matched and scope.value:
-            if matches_scope_pattern(target_host, scope.value):
+            if matches_scope_pattern(target_input, scope.value):
                 matched = True
 
         if not matched:
