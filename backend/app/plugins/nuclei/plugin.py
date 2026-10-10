@@ -31,84 +31,84 @@ PLUGIN_META = {
 WEB_VULN_CATEGORIES = {
     "injection": {
         "label": "Injection",
-        "templates": ["vulnerabilities/generic/sqli", "vulnerabilities/generic/xss"],
+        "tags": ["sqli", "xss", "ssti", "rce", "injection"],
         "description": "SQL Injection, XSS, Command Injection, Template Injection",
         "severity": "CRITICAL",
         "mitre": ["T1190"],
     },
     "ssrf": {
         "label": "SSRF",
-        "templates": ["vulnerabilities/generic/ssrf"],
+        "tags": ["ssrf"],
         "description": "Server-Side Request Forgery — internal service exposure",
         "severity": "HIGH",
         "mitre": ["T1190"],
     },
     "auth": {
         "label": "Authentication Weaknesses",
-        "templates": ["exposures/configs", "vulnerabilities/generic/default-login"],
+        "tags": ["default-login", "weak-auth", "auth-bypass"],
         "description": "Default credentials, weak auth, session management issues",
         "severity": "HIGH",
         "mitre": ["T1078"],
     },
     "misconfig": {
         "label": "Security Misconfiguration",
-        "templates": ["misconfiguration"],
+        "tags": ["misconfig", "config"],
         "description": "Open redirects, debug endpoints, directory listing, backup files",
         "severity": "MEDIUM",
         "mitre": ["T1190"],
     },
     "cves": {
         "label": "Known CVEs",
-        "templates": ["cves"],
+        "tags": ["cve"],
         "description": "CVE-identified vulnerabilities in web frameworks and CMS platforms",
         "severity": "CRITICAL",
         "mitre": ["T1190"],
     },
     "jwt": {
         "label": "JWT / OAuth Issues",
-        "templates": ["vulnerabilities/generic/jwt"],
+        "tags": ["jwt", "oauth", "oidc"],
         "description": "JWT alg:none, weak signing, OAuth misconfiguration, token leakage",
         "severity": "HIGH",
         "mitre": ["T1078.001"],
     },
     "cors": {
         "label": "CORS Issues",
-        "templates": ["misconfiguration/cors"],
+        "tags": ["cors"],
         "description": "Overly permissive CORS allowing cross-origin credential theft",
         "severity": "MEDIUM",
         "mitre": ["T1185"],
     },
     "api": {
         "label": "API Security",
-        "templates": ["exposures/apis", "misconfiguration/graphql"],
+        "tags": ["api", "graphql", "idor", "bola", "exposure"],
         "description": "Exposed API docs, GraphQL introspection, BOLA/IDOR, mass assignment",
         "severity": "HIGH",
         "mitre": ["T1190"],
     },
     "exposures": {
         "label": "Sensitive Exposures",
-        "templates": ["exposures"],
+        "tags": ["exposure", "token", "keys", "secret"],
         "description": ".env files, git repos, AWS keys, private keys, debug info",
         "severity": "HIGH",
         "mitre": ["T1552"],
     },
     "takeovers": {
         "label": "Subdomain Takeovers",
-        "templates": ["takeovers"],
+        "tags": ["takeover", "subdomain-takeover"],
         "description": "Dangling DNS pointing to unclaimed cloud/SaaS services",
         "severity": "HIGH",
         "mitre": ["T1584"],
     },
     "path_traversal": {
         "label": "Path Traversal",
-        "templates": ["vulnerabilities/generic/lfi"],
+        "tags": ["lfi", "path-traversal", "traversal"],
         "description": "Local file inclusion, directory traversal, file read",
         "severity": "HIGH",
         "mitre": ["T1083"],
     },
     "upload": {
         "label": "File Upload",
-        "templates": ["vulnerabilities/generic/file-upload"],
+        "tags": ["file-upload", "upload"],
         "description": "Unrestricted file upload, webshell upload, MIME bypass",
         "severity": "CRITICAL",
         "mitre": ["T1190"],
@@ -162,10 +162,10 @@ def scan_web(
             "authorization_warning": AUTH_WARNING,
         }
 
-    templates = []
+    tags = []
     for category in selected:
-        templates.extend(WEB_VULN_CATEGORIES[category]["templates"])
-    templates = list(dict.fromkeys(templates))
+        tags.extend(WEB_VULN_CATEGORIES[category]["tags"])
+    tags = list(dict.fromkeys(tags))
 
     command = [
         nuclei_path, "-jsonl-export", output_file, "-silent", "-no-color", "-no-interactsh",
@@ -173,9 +173,8 @@ def scan_web(
         "-rate-limit", str(max(1, min(int(rate_limit), 100))),
         "-timeout", str(max(1, min(int(timeout), 60))),
         "-retries", "1",
+        "-tags", ",".join(tags),
     ]
-    for template in templates:
-        command.extend(["-t", template])
     if proxy:
         command.extend(["-proxy", proxy])
     for target in targets:
