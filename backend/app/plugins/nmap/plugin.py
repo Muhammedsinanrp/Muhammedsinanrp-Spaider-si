@@ -61,8 +61,8 @@ def scan(
         parsed = _parse_xml(result_file)
         return {"hosts": len(parsed), "result_file": result_file, "parsed": parsed, "authorization_warning": AUTH_WARNING}
     except FileNotFoundError:
-        logger.warning("Nmap not found — returning mock data")
-        return _mock_result(targets)
+        logger.error("Nmap executable not found; no scan was performed")
+        return {"error": "Nmap executable not found. Install Nmap and ensure it is on PATH.", "targets": targets, "mock": False, "authorization_warning": AUTH_WARNING}
     except subprocess.TimeoutExpired:
         return {"error": "Scan timed out", "authorization_warning": AUTH_WARNING}
 
@@ -112,18 +112,6 @@ def _parse_xml(xml_file: str) -> list:
     except Exception as e:
         logger.error("Failed to parse Nmap XML", error=str(e))
         return []
-
-
-def _mock_result(targets: list) -> dict:
-    return {
-        "hosts": 3, "mock": True,
-        "authorization_warning": AUTH_WARNING,
-        "parsed": [
-            {"ip": "192.168.1.1",  "hostname": "router.local",  "os": "Linux",        "ports": [{"port": 22, "name": "ssh"}, {"port": 80, "name": "http"}]},
-            {"ip": "192.168.1.10", "hostname": "web01.local",   "os": "Ubuntu 22.04", "ports": [{"port": 80, "name": "http"}, {"port": 443, "name": "https"}, {"port": 22, "name": "ssh"}]},
-            {"ip": "192.168.1.20", "hostname": "db01.local",    "os": "Debian 11",    "ports": [{"port": 5432, "name": "postgresql"}, {"port": 22, "name": "ssh"}]},
-        ],
-    }
 
 
 def analyze(results: dict) -> dict:
