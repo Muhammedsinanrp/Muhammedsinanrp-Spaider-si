@@ -1,0 +1,72 @@
+name: SPAiDER build and tests
+
+on:
+  push:
+    branches:
+      - main
+      - feature/real-web-scan-pipeline
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  frontend:
+    name: Frontend typecheck and build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install npm dependencies
+        run: npm install --allow-git=all
+      - name: Approve Vite's esbuild install script
+        run: npm install-scripts approve esbuild
+      - name: Rebuild esbuild
+        run: npm rebuild esbuild
+      - name: Typecheck and build
+        run: npm run build
+
+  backend:
+    name: Backend syntax and unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install \
+            pytest \
+            "fastapi==0.111.0" \
+            "sqlalchemy==2.0.30" \
+            "pydantic==2.7.1" \
+            "pydantic-settings==2.2.1" \
+            "structlog==24.1.0" \
+            "aiosqlite==0.20.0" \
+            "email-validator==2.1.1" \
+            "httpx==0.27.0" \
+            "python-multipart==0.0.9" \
+            "python-jose[cryptography]==3.3.0" \
+            "passlib[bcrypt]==1.7.4"
+      - name: Compile backend modules
+        run: python -m compileall -q backend/app
+      - name: Run unit tests
+        env:
+          PYTHONPATH: backend
+        run: python -m pytest -q backend/tests
