@@ -13,12 +13,20 @@ import Plugins from './pages/Plugins'
 import Reports from './pages/Reports'
 import MitreAttack from './pages/MitreAttack'
 import WebSecurity from './pages/WebSecurity'
+import Login from './pages/Login'
+
+function AuthenticatedLayout() {
+  return localStorage.getItem('spaider_token')
+    ? <Layout />
+    : <Navigate to="/login" replace />
+}
 
 export default function App() {
   return (
     <HashRouter>
       <Routes>
-        <Route path="/" element={<Layout />}>
+        <Route path="/login" element={<Login />} />
+        <Route path="/" element={<AuthenticatedLayout />}>
           <Route index element={<Navigate to="/dashboard" replace />} />
           <Route path="dashboard" element={<Dashboard />} />
           <Route path="scans" element={<Scans />} />
