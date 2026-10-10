@@ -246,7 +246,7 @@ async def generate_scan_report(
 @router.get("/{report_id}/markdown")
 async def get_report_markdown(report_id: str, db: AsyncSession = Depends(get_db)):
     """Export report as formatted Markdown document."""
-    result = await db.execute(select(Report).where(Report.id == report_id))
+    result = await db.execute(select(Report).where(Report.id == report_id, Report.id.notin_(LEGACY_DEMO_REPORT_IDS)))
     report = result.scalar_one_or_none()
     if not report:
         raise HTTPException(status_code=404, detail="Report not found")
