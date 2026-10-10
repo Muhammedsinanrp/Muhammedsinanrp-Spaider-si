@@ -14,6 +14,7 @@ class Settings(BaseSettings):
     access_token_expire_minutes: int = 60 * 24  # 24 hours
     allow_self_registration: bool = Field(default=False, env="ALLOW_SELF_REGISTRATION")
     spaider_admin_password: str = Field(default="", env="SPAIDER_ADMIN_PASSWORD")
+    spaider_analyst_password: str = Field(default="", env="SPAIDER_ANALYST_PASSWORD")
 
     # ── Database ───────────────────────────────────────────────────────────
     # Default: SQLite for local dev. Set DATABASE_URL in .env for PostgreSQL.
