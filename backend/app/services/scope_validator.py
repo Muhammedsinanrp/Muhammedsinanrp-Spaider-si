@@ -120,51 +120,41 @@ class ScopeValidator:
 
     @staticmethod
     def validate_target(scope: Scope, target_input: str) -> Tuple[bool, str]:
-        """Synchronously validate target against a single Scope model."""
+        """Validate a target against one documented, active authorization scope."""
         target_host = extract_host(target_input)
         now = datetime.utcnow()
 
         if scope.authorization_status != "AUTHORIZED":
             return False, f"Scope '{scope.name}' is not AUTHORIZED (status: {scope.authorization_status})"
-
         if scope.valid_from and scope.valid_from > now:
             return False, f"Scope '{scope.name}' is not valid until {scope.valid_from}"
-
         if scope.valid_until and scope.valid_until < now:
             return False, f"Scope '{scope.name}' has expired on {scope.valid_until}"
-
         if scope.expires_at and scope.expires_at < now:
             return False, f"Scope '{scope.name}' has expired"
 
-        if not str(scope.authorized_by or "").strip():
-            return False, f"Scope '{scope.name}' is missing the authorizing person."
-
-        if not str(scope.authorization_document or "").strip():
-            return False, f"Scope '{scope.name}' is missing an authorization document reference."
-
-        # Check excluded
-        for excl in scope.excluded_targets or []:
-            if matches_scope_pattern(target_input, str(excl)):
+        # Exclusions take precedence over positive scope entries.
+        for excluded in scope.excluded_targets or []:
+            if matches_scope_pattern(target_input, str(excluded)):
                 return False, f"Target '{target_input}' is explicitly excluded in scope '{scope.name}'"
 
-        # Check allowed targets
-        matched = False
-        for allowed in scope.targets or []:
-            if matches_scope_pattern(target_input, str(allowed)):
-                matched = True
-                break
-
-        if not matched and scope.value:
-            if matches_scope_pattern(target_input, scope.value):
-                matched = True
-
-        if not matched:
+        matches = any(
+            matches_scope_pattern(target_input, str(allowed))
+            for allowed in scope.targets or []
+        )
+        if not matches and scope.value:
+            matches = matches_scope_pattern(target_input, str(scope.value))
+        if not matches:
             return False, f"Target '{target_input}' (host: {target_host}) not found in authorized targets of scope '{scope.name}'"
 
+        if not str(scope.authorized_by or "").strip():
+            return False, f"Scope '{scope.name}' is missing the authorizing person."
+        if not str(scope.authorization_document or "").strip():
+            return False, f"Scope '{scope.name}' is missing an authorization document reference."
         if not scope.active_testing:
             return False, f"Active testing is disabled for scope '{scope.name}'"
 
-        return True, f"Target '{target_input}' is authorized"
+        return True, f"Target '{target_input}' is authorized under scope '{scope.name}'"
 
 
 async def validate_target_scope(
