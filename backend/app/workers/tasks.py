@@ -96,7 +96,7 @@ def run_web_security_scan(
                 digest = __import__("hashlib").sha256(
                     f"{template_id}|{url}".encode("utf-8")
                 ).hexdigest()
-                existing = db.query(Finding).filter(Finding.dedup_hash == digest).first()
+                existing = db.query(Finding).filter(Finding.dedup_hash == digest, Finding.scan_job_id == scan_id).first()
                 if existing:
                     existing.occurrence_count = (existing.occurrence_count or 1) + 1
                     continue
