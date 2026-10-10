@@ -26,7 +26,10 @@ export default function Login() {
         ? requested
         : '/dashboard', { replace: true })
     } catch (err: any) {
-      const message = err?.response?.data?.detail || err?.message || 'Login failed. Check your credentials and backend status.'
+      const networkFailure = !err?.response && (err?.message === 'Network Error' || err?.code === 'ERR_NETWORK')
+      const message = networkFailure
+        ? 'Cannot reach the SPAiDER API. Check that the backend is running and the frontend API proxy points to it.'
+        : err?.response?.data?.detail || err?.message || 'Login failed. Check your credentials and backend status.'
       setError(String(message))
       toast.error('Login failed')
     } finally {
