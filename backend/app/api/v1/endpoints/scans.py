@@ -309,7 +309,7 @@ async def get_experiment_metrics(db: AsyncSession = Depends(get_db)):
 @router.delete("/{scan_id}/cancel")
 async def cancel_scan(scan_id: str, db: AsyncSession = Depends(get_db)):
     """Cancel a running scan job."""
-    result = await db.execute(select(ScanJob).where(ScanJob.id == scan_id))
+    result = await db.execute(select(ScanJob).where(ScanJob.id == scan_id, ScanJob.id.notin_(LEGACY_DEMO_SCAN_IDS)))
     job = result.scalar_one_or_none()
     if not job:
         raise HTTPException(status_code=404, detail="Scan job not found")
