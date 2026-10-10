@@ -173,6 +173,7 @@ def scan_web(
         "-rate-limit", str(max(1, min(int(rate_limit), 100))),
         "-timeout", str(max(1, min(int(timeout), 60))),
         "-retries", "1",
+        "-exclude-tags", "intrusive,dos,fuzz",
         "-tags", ",".join(tags),
     ]
     if proxy:
