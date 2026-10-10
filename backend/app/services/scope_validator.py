@@ -189,7 +189,7 @@ async def validate_target_scope(
         # Check excluded targets first
         is_excluded = False
         for excl in scope.excluded_targets or []:
-            if matches_scope_pattern(target_host, str(excl)):
+            if matches_scope_pattern(target_input, str(excl)):
                 is_excluded = True
                 break
         if is_excluded:
@@ -197,13 +197,13 @@ async def validate_target_scope(
 
         # Check scope targets list
         for allowed in scope.targets or []:
-            if matches_scope_pattern(target_host, str(allowed)):
+            if matches_scope_pattern(target_input, str(allowed)):
                 matching_scope = scope
                 break
 
         # Check scope single value field
         if not matching_scope and scope.value:
-            if matches_scope_pattern(target_host, scope.value):
+            if matches_scope_pattern(target_input, scope.value):
                 matching_scope = scope
 
         if matching_scope:
