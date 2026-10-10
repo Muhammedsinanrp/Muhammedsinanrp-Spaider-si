@@ -13,6 +13,9 @@ from app.models.models import Finding, Severity
 
 router = APIRouter()
 
+LEGACY_DEMO_FINDING_IDS = ("fnd-001", "fnd-002", "fnd-003", "fnd-004")
+
+
 
 class FindingOut(BaseModel):
     id: str
@@ -52,7 +55,7 @@ async def list_findings(
     offset: int = 0,
     db: AsyncSession = Depends(get_db),
 ):
-    stmt = select(Finding).order_by(desc(Finding.created_at)).limit(limit).offset(offset)
+    stmt = select(Finding).where(Finding.id.notin_(LEGACY_DEMO_FINDING_IDS)).order_by(desc(Finding.created_at)).limit(limit).offset(offset)
     if severity:
         stmt = stmt.where(Finding.severity == severity)
     if asset_id:
@@ -93,7 +96,7 @@ async def finding_stats(db: AsyncSession = Depends(get_db)):
     counts = {}
     for sev in Severity:
         result = await db.execute(
-            select(func.count(Finding.id)).where(Finding.severity == sev)
+            select(func.count(Finding.id)).where(Finding.severity == sev, Finding.id.notin_(LEGACY_DEMO_FINDING_IDS))
         )
         counts[sev.value] = result.scalar()
     return counts
@@ -101,7 +104,7 @@ async def finding_stats(db: AsyncSession = Depends(get_db)):
 
 @router.get("/{finding_id}")
 async def get_finding(finding_id: str, db: AsyncSession = Depends(get_db)):
-    result = await db.execute(select(Finding).where(Finding.id == uuid.UUID(finding_id)))
+    result = await db.execute(select(Finding).where(Finding.id == str(finding_id), Finding.id.notin_(LEGACY_DEMO_FINDING_IDS)))
     f = result.scalar_one_or_none()
     if not f:
         raise HTTPException(status_code=404, detail="Finding not found")
