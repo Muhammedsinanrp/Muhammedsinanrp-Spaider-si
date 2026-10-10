@@ -33,8 +33,8 @@ export default function Plugins() {
           <p className="page-subtitle">Tool catalogue with runtime dependency checks from the backend environment.</p>
         </div>
         <div className="flex gap-2">
-          <span className="badge badge-safe">${readyCount} ready</span>
-          <span className="badge badge-info">${configCount + unavailableCount} need setup</span>
+          <span className="badge badge-safe">{readyCount} ready</span>
+          <span className="badge badge-info">{configCount + unavailableCount} need setup</span>
         </div>
       </div>
 
