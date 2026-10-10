@@ -41,6 +41,7 @@ export default function WebSecurity() {
   const [scanning, setScanning] = useState(false)
   const [detailFinding, setDetailFinding] = useState<any>(null)
   const [proxyMode, setProxyMode] = useState(false)
+  const [proxyUrl, setProxyUrl] = useState('http://127.0.0.1:8080')
   const [taskId, setTaskId] = useState<string | null>(null)
   const [scanStatus, setScanStatus] = useState('IDLE')
   const [scanError, setScanError] = useState<string | null>(null)
@@ -125,6 +126,7 @@ export default function WebSecurity() {
         categories: selected,
         rate_limit: 10,
         timeout: 10,
+        proxy: proxyMode && proxyUrl.trim() ? proxyUrl.trim() : undefined,
       })
       if (!response?.task_id) throw new Error('The API did not return a scan task ID.')
       setScanStatus(String(response.status || 'QUEUED').toUpperCase())
@@ -164,7 +166,7 @@ export default function WebSecurity() {
       <div className="page-header">
         <div>
           <h1 className="page-title gradient-text-red">🕷️ Web Security Testing</h1>
-          <p className="page-subtitle">Nuclei · Burp · Caido — XSS · SQLi · SSRF · IDOR · JWT · CORS · GraphQL · 8000+ checks</p>
+          <p className="page-subtitle">Nuclei template scanning · evidence-backed findings · optional Burp/Caido proxy and finding import</p>
         </div>
         <div className="flex gap-2">
           <button
@@ -183,14 +185,26 @@ export default function WebSecurity() {
           borderRadius: 'var(--radius-lg)', padding: 'var(--space-5)', marginBottom: 'var(--space-5)',
         }}>
           <div style={{ fontWeight: 700, marginBottom: 8 }}>🔥 Burp / Caido Proxy Integration</div>
+          <div className="form-group" style={{ marginBottom: 'var(--space-4)' }}>
+            <label className="form-label">Proxy URL (reachable from the backend host/container)</label>
+            <input
+              className="input input-mono"
+              value={proxyUrl}
+              onChange={e => setProxyUrl(e.target.value)}
+              placeholder="http://127.0.0.1:8080"
+            />
+            <div style={{ fontSize: '0.72rem', color: 'var(--color-text-muted)', marginTop: 5 }}>
+              The URL is passed to Nuclei only when proxy mode is enabled. If the backend runs in Docker, use a proxy address reachable from that container.
+            </div>
+          </div>
           <div className="grid-3" style={{ gap: 'var(--space-4)', fontSize: '0.875rem' }}>
             {[
               ['1. Start Burp Suite', 'Proxy → Options → HTTP Proxy → 127.0.0.1:8080'],
               ['2. Configure Browser', 'Set proxy to 127.0.0.1:8080 and install Burp CA cert'],
-              ['3. Browse Target',    'Traffic flows through Burp — SPAIDER plugin syncs findings'],
+              ['3. Browse Target',    'Capture traffic in the configured proxy'],
               ['4. Run Active Scan',  'Burp Dashboard → New Scan → configure scope → launch'],
               ['5. Purple Validate',  'SPAIDER auto-correlates with Wazuh/Zeek detections'],
-              ['6. View in SPAIDER',  'Findings appear here automatically via the plugin bridge'],
+              ['6. View in SPAIDER',  'Imported findings are saved through the SPAIDER API'],
             ].map(([title, desc]) => (
               <div key={title} style={{ padding: 'var(--space-3)', background: 'rgba(255,255,255,0.03)', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)' }}>
                 <div style={{ fontWeight: 700, color: 'var(--color-high)', marginBottom: 4 }}>{title}</div>
