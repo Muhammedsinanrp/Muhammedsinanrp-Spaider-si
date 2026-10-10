@@ -13,6 +13,9 @@ from app.models.models import Alert, AlertStatus, Severity
 
 router = APIRouter()
 
+LEGACY_DEMO_ALERT_IDS = ("alt-001", "alt-002", "alt-003", "alt-004")
+
+
 
 class AlertOut(BaseModel):
     id: str
@@ -40,7 +43,7 @@ async def list_alerts(
     offset: int = 0,
     db: AsyncSession = Depends(get_db),
 ):
-    stmt = select(Alert).order_by(desc(Alert.created_at)).limit(limit).offset(offset)
+    stmt = select(Alert).where(Alert.id.notin_(LEGACY_DEMO_ALERT_IDS)).order_by(desc(Alert.created_at)).limit(limit).offset(offset)
     if status:
         stmt = stmt.where(Alert.status == status)
     if severity:
@@ -67,7 +70,7 @@ async def update_alert_status(
     new_status: AlertStatus,
     db: AsyncSession = Depends(get_db),
 ):
-    result = await db.execute(select(Alert).where(Alert.id == uuid.UUID(alert_id)))
+    result = await db.execute(select(Alert).where(Alert.id == str(alert_id), Alert.id.notin_(LEGACY_DEMO_ALERT_IDS)))
     alert = result.scalar_one_or_none()
     if not alert:
         raise HTTPException(status_code=404, detail="Alert not found")
@@ -87,7 +90,7 @@ async def alert_timeline(
     from datetime import timedelta
     since = datetime.utcnow() - timedelta(hours=hours)
     result = await db.execute(
-        select(Alert.created_at, Alert.severity)
+        select(Alert.created_at, Alert.severity).where(Alert.id.notin_(LEGACY_DEMO_ALERT_IDS))
         .where(Alert.created_at >= since)
         .order_by(Alert.created_at)
     )
