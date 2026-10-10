@@ -6,6 +6,7 @@ from sqlalchemy import select, delete
 import structlog
 
 from app.core.database import engine, Base, AsyncSessionLocal
+from app.core.config import settings
 from app.models.models import (
     User, Scope, Target, Asset, Service, ScanJob, Finding, Alert,
     MalwareSample, IOC, MitreTechnique, Report,
@@ -34,27 +35,45 @@ async def seed_database(force: bool = False):
         logger.info("Seeding SPAIDER cyber intelligence platform data...")
 
         # 1. Users
+        is_development = settings.environment.lower() in {"development", "dev", "test"}
+        admin_password = settings.spaider_admin_password
+        analyst_password = settings.spaider_analyst_password
+        if not admin_password:
+            if not is_development:
+                raise RuntimeError(
+                    "SPAIDER_ADMIN_PASSWORD must be set before seeding a non-development environment."
+                )
+            admin_password = "admin123"
+            logger.warning(
+                "Development administrator password is using the built-in local default. "
+                "Set SPAIDER_ADMIN_PASSWORD before exposing this environment."
+            )
+        if not analyst_password and is_development:
+            analyst_password = "analyst123"
+            logger.warning("Development analyst password is using the built-in local default.")
+
         admin_user = User(
             id="usr-admin-001",
             username="admin",
             email="admin@spaider.internal",
-            hashed_password=hash_password("admin123"),
-            full_name="Chief Information Security Officer",
+            hashed_password=hash_password(admin_password),
+            full_name="SPAIDER Administrator",
             role="admin",
             is_active=True,
             is_superuser=True,
         )
-        analyst_user = User(
-            id="usr-analyst-002",
-            username="analyst",
-            email="analyst@spaider.internal",
-            hashed_password=hash_password("analyst123"),
-            full_name="Lead Security Researcher",
-            role="analyst",
-            is_active=True,
-            is_superuser=False,
-        )
-        db.add_all([admin_user, analyst_user])
+        db.add(admin_user)
+        if analyst_password:
+            db.add(User(
+                id="usr-analyst-002",
+                username="analyst",
+                email="analyst@spaider.internal",
+                hashed_password=hash_password(analyst_password),
+                full_name="SPAIDER Analyst",
+                role="analyst",
+                is_active=True,
+                is_superuser=False,
+            ))
         await db.flush()
 
         # ─── 2. Lab Targets (controlled test environment) ────────────────────
@@ -100,6 +119,7 @@ async def seed_database(force: bool = False):
             destructive_testing=False,
             rate_limit="controlled",
             authorized_by="Lab Administrator",
+            authorization_document="LOCAL_DEV_LAB_ATTESTATION: controlled OWASP Juice Shop container",
             valid_from=datetime.utcnow() - timedelta(days=30),
             valid_until=datetime.utcnow() + timedelta(days=365),
         )
@@ -117,6 +137,7 @@ async def seed_database(force: bool = False):
             destructive_testing=False,
             rate_limit="controlled",
             authorized_by="Lab Administrator",
+            authorization_document="LOCAL_DEV_LAB_ATTESTATION: controlled DVWA container",
             valid_from=datetime.utcnow() - timedelta(days=30),
             valid_until=datetime.utcnow() + timedelta(days=365),
         )
@@ -134,6 +155,7 @@ async def seed_database(force: bool = False):
             destructive_testing=False,
             rate_limit="controlled",
             authorized_by="Lab Administrator",
+            authorization_document="LOCAL_DEV_LAB_ATTESTATION: controlled WebGoat container",
             valid_from=datetime.utcnow() - timedelta(days=30),
             valid_until=datetime.utcnow() + timedelta(days=365),
         )
