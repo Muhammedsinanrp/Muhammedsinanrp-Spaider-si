@@ -22,7 +22,7 @@ function ScanEventTimeline({ events }: { events: any[] }) {
       {events.slice(-5).map((ev: any, i: number) => (
         <div key={i} style={{ display: 'flex', gap: 8, marginBottom: 6, fontSize: '0.7rem', color: 'var(--color-text-muted)' }}>
           <span style={{ color: 'var(--color-cyan)', flexShrink: 0 }}>▸</span>
-          <span style={{ color: 'var(--color-text-secondary)' }}>{ev.event_type}</span>
+          <span style={{ color: 'var(--color-text-secondary)' }}>{ev.stage || ev.event_type || 'Event'}</span>
           {ev.message && <span>{ev.message}</span>}
         </div>
       ))}
@@ -141,14 +141,14 @@ export default function Scans() {
           gap: 10,
           marginBottom: 'var(--space-5)',
         }}>
-          <MetricCard label="Total Scans" value={metrics.total_scans} />
-          <MetricCard label="Completed" value={metrics.completed} color="var(--color-blue)" />
-          <MetricCard label="Findings" value={metrics.total_findings} color="#ff9800" />
-          <MetricCard label="Critical" value={metrics.critical_findings} color="var(--color-critical)" />
-          <MetricCard label="High" value={metrics.high_findings} color="var(--color-high)" />
-          <MetricCard label="Dedup Rate" value={metrics.dedup_rate != null ? `${metrics.dedup_rate}%` : '-'} color="var(--color-cyan)" />
-          <MetricCard label="AI Analyzed" value={metrics.ai_analyzed} color="var(--color-purple)" />
-          <MetricCard label="Active Targets" value={metrics.active_targets} color="var(--color-safe)" />
+          <MetricCard label="Total scan jobs" value={Number(metrics.scans_executed ?? scans.length)} />
+          <MetricCard label="Completed" value={scans.filter((s:any) => String(s.status).toUpperCase() === 'COMPLETED').length} color="var(--color-blue)" />
+          <MetricCard label="Running / queued" value={scans.filter((s:any) => ['RUNNING','PENDING','STARTED','QUEUED'].includes(String(s.status).toUpperCase())).length} color="var(--color-medium)" />
+          <MetricCard label="Stored findings" value={Number(metrics.findings?.total || 0)} color="#ff9800" />
+          <MetricCard label="Critical" value={Number(metrics.findings?.critical || 0)} color="var(--color-critical)" />
+          <MetricCard label="High" value={Number(metrics.findings?.high || 0)} color="var(--color-high)" />
+          <MetricCard label="Targets scanned" value={Number(metrics.targets_scanned || 0)} color="var(--color-safe)" />
+          <MetricCard label="Assets recorded" value={Number(metrics.assets_discovered || 0)} color="var(--color-cyan)" />
         </div>
       )}
 
