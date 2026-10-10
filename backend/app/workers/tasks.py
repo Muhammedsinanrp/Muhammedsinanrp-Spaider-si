@@ -39,42 +39,194 @@ def get_db_sync():
     return Session()
 
 
-@celery_app.task(name="app.workers.tasks.run_web_security_scan", bind=True, max_retries=2)
-def run_web_security_scan(self, targets: List[str], categories: List[str],
-                          rate_limit: int = 50, timeout: int = 10,
-                          proxy: Optional[str] = None):
-    """Run Nuclei web vulnerability scan across selected categories."""
-    logger.info("Starting web security scan", targets=targets, categories=categories)
+@celery_app.task(name="app.workers.tasks.run_web_security_scan", bind=True, max_retries=0)
+def run_web_security_scan(
+    self,
+    targets: List[str],
+    categories: List[str],
+    rate_limit: int = 10,
+    timeout: int = 10,
+    proxy: Optional[str] = None,
+    scan_id: Optional[str] = None,
+):
+    """Run Nuclei and persist its real findings and job state."""
+    from app.models.models import Finding, ScanEvent, ScanJob, ScanStatus, Severity
     from app.plugins.nuclei.plugin import scan_web
-    result = scan_web(targets, categories, settings.scan_results_dir)
 
-    # Persist findings to DB
-    if result.get("findings"):
-        try:
-            from app.models.models import Finding, Severity
-            db = get_db_sync()
-            sev_map = {"CRITICAL": Severity.CRITICAL, "HIGH": Severity.HIGH,
-                       "MEDIUM": Severity.MEDIUM, "LOW": Severity.LOW, "INFO": Severity.INFO}
-            for f in result["findings"]:
-                finding = Finding(
-                    id=uuid.uuid4(),
-                    title=f.get("title", "Unknown"),
-                    description=f.get("description", ""),
-                    severity=sev_map.get(f.get("severity", "INFO"), Severity.INFO),
+    db = get_db_sync()
+    try:
+        if scan_id:
+            job = db.query(ScanJob).filter(ScanJob.id == scan_id).first()
+            if job:
+                job.status = ScanStatus.RUNNING
+                job.started_at = job.started_at or datetime.utcnow()
+                job.progress = max(job.progress or 0, 10)
+                db.add(ScanEvent(
+                    id=str(uuid.uuid4()),
+                    scan_job_id=scan_id,
+                    stage="WEB_SCAN",
+                    progress=10,
+                    message="Nuclei scanner execution started.",
+                    data={"categories": categories, "target_count": len(targets)},
+                ))
+                db.commit()
+
+        result = scan_web(
+            targets,
+            categories,
+            settings.scan_results_dir,
+            rate_limit=rate_limit,
+            timeout=timeout,
+            proxy=proxy,
+        )
+
+        scan_error = result.get("error")
+        persisted_count = 0
+        if not scan_error:
+            severity_map = {
+                "CRITICAL": Severity.CRITICAL,
+                "HIGH": Severity.HIGH,
+                "MEDIUM": Severity.MEDIUM,
+                "LOW": Severity.LOW,
+                "INFO": Severity.INFO,
+            }
+            for item in result.get("findings", []):
+                url = str(item.get("url") or "")
+                template_id = str(item.get("template_id") or "nuclei-unknown")
+                digest = __import__("hashlib").sha256(
+                    f"{template_id}|{url}".encode("utf-8")
+                ).hexdigest()
+                existing = db.query(Finding).filter(Finding.dedup_hash == digest).first()
+                if existing:
+                    existing.occurrence_count = (existing.occurrence_count or 1) + 1
+                    continue
+
+                cves = item.get("cve_ids") or []
+                if isinstance(cves, str):
+                    cves = [cves]
+                cwes = item.get("cwe_ids") or []
+                if isinstance(cwes, str):
+                    cwes = [cwes]
+                severity = severity_map.get(str(item.get("severity", "INFO")).upper(), Severity.INFO)
+                try:
+                    cvss = float(item["cvss_score"]) if item.get("cvss_score") is not None else None
+                except (ValueError, TypeError):
+                    cvss = None
+
+                db.add(Finding(
+                    id=str(uuid.uuid4()),
+                    title=str(item.get("title") or template_id)[:512],
+                    description=str(item.get("description") or ""),
+                    severity=severity,
+                    confidence=0.95 if item.get("matcher_name") else 0.80,
+                    risk_score=cvss or 0.0,
+                    asset_value=__import__("urllib.parse", fromlist=["urlsplit"]).urlsplit(url).hostname if url else None,
+                    endpoint=url[:1024] if url else None,
+                    protocol="https" if url.startswith("https://") else "http",
+                    cve=cves[0] if cves else None,
+                    cwe=cwes[0] if cwes else None,
+                    cvss=cvss,
+                    scanner="nuclei",
                     plugin="nuclei",
-                    template_id=f.get("template_id"),
-                    cve_ids=f.get("cve_ids", []),
-                    references=f.get("references", []),
-                    request_raw=f.get("curl_command", ""),
-                    raw_data=f,
-                )
-                db.add(finding)
-            db.commit()
-            db.close()
-        except Exception as e:
-            logger.error("Failed to store web findings", error=str(e))
+                    template_id=template_id[:128],
+                    cve_ids=cves,
+                    cvss_score=cvss,
+                    cwe_ids=cwes,
+                    mitre_techniques=[],
+                    affected_url=url[:1024] if url else None,
+                    request_raw=str(item.get("request") or ""),
+                    response_raw=str(item.get("response") or ""),
+                    evidence=json.dumps({
+                        "matcher_name": item.get("matcher_name"),
+                        "extracted_results": item.get("extracted_results") or [],
+                        "matched_url": url,
+                    }),
+                    remediation="Review the matched Nuclei template and remediate the affected component or configuration.",
+                    references=item.get("references") or [],
+                    tags=item.get("tags") or [],
+                    raw_data=item,
+                    curl_poc=str(item.get("curl_command") or ""),
+                    dedup_hash=digest,
+                    occurrence_count=1,
+                    status="open",
+                    scan_job_id=scan_id,
+                ))
+                persisted_count += 1
 
-    return result
+        if scan_id:
+            job = db.query(ScanJob).filter(ScanJob.id == scan_id).first()
+            if job:
+                job.status = ScanStatus.FAILED if scan_error else ScanStatus.COMPLETED
+                job.progress = 100
+                job.completed_at = datetime.utcnow()
+                job.error_msg = str(scan_error)[:4000] if scan_error else None
+                job.result_file = result.get("output_file")
+                job.raw_output = json.dumps({
+                    "run_id": result.get("run_id"),
+                    "total_findings": result.get("total_findings", 0),
+                    "persisted_findings": persisted_count,
+                    "categories_scanned": result.get("categories_scanned", categories),
+                    "error": scan_error,
+                    "exit_code": result.get("exit_code"),
+                    "demo": False,
+                })
+                db.add(ScanEvent(
+                    id=str(uuid.uuid4()),
+                    scan_job_id=scan_id,
+                    stage="FAILED" if scan_error else "REPORT",
+                    progress=100,
+                    message=("Web scan failed: " + str(scan_error)[:450]) if scan_error
+                            else f"Web scan completed. {result.get('total_findings', 0)} real finding(s) returned; {persisted_count} new record(s) persisted.",
+                    data={
+                        "total_findings": result.get("total_findings", 0),
+                        "persisted_findings": persisted_count,
+                        "run_id": result.get("run_id"),
+                    },
+                ))
+        db.commit()
+        logger.info(
+            "Web security scan finished",
+            scan_id=scan_id,
+            error=bool(scan_error),
+            findings=result.get("total_findings", 0),
+            persisted=persisted_count,
+        )
+        result["persisted_findings"] = persisted_count
+        result["demo"] = False
+        return result
+    except Exception as exc:
+        db.rollback()
+        logger.exception("Web security scan task failed", scan_id=scan_id, error=str(exc))
+        if scan_id:
+            try:
+                job = db.query(ScanJob).filter(ScanJob.id == scan_id).first()
+                if job:
+                    job.status = ScanStatus.FAILED
+                    job.progress = 100
+                    job.completed_at = datetime.utcnow()
+                    job.error_msg = str(exc)[:4000]
+                    db.add(ScanEvent(
+                        id=str(uuid.uuid4()),
+                        scan_job_id=scan_id,
+                        stage="FAILED",
+                        progress=100,
+                        message=f"Web scan failed: {str(exc)[:450]}",
+                        data={},
+                    ))
+                    db.commit()
+            except Exception:
+                db.rollback()
+        return {
+            "run_id": None,
+            "targets": targets,
+            "categories_scanned": categories,
+            "total_findings": 0,
+            "findings": [],
+            "error": str(exc),
+            "demo": False,
+        }
+    finally:
+        db.close()
 
 
 # ─────────────────────────────────────────────────────────────────────────────
