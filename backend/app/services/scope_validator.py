@@ -173,76 +173,82 @@ async def validate_target_scope(
     scope_id: Optional[str] = None,
 ) -> Tuple[bool, str, Optional[Scope]]:
     """
-    Validate whether a target is permitted for active scanning.
-    Returns: (is_authorized, reason, matching_scope)
+    Validate an active scan target against an explicit authorization scope.
+
+    Continue evaluating candidate scopes when one matches but is expired,
+    disabled, excluded, or missing authorization evidence; an older unusable
+    record must not shadow a newer valid scope for the same authorized target.
     """
     target_host = extract_host(target_input)
-
-    # Fetch active scopes
     stmt = select(Scope).where(Scope.authorization_status == "AUTHORIZED")
     if scope_id:
         stmt = stmt.where(Scope.id == scope_id)
 
     result = await db.execute(stmt)
     scopes = result.scalars().all()
-
     now = datetime.utcnow()
-    matching_scope: Optional[Scope] = None
+    missing_document_scope: Optional[Scope] = None
+    inactive_scope: Optional[Scope] = None
+    future_scope: Optional[Scope] = None
 
     for scope in scopes:
-        # Check validity window before matching the target.
         if scope.valid_from and scope.valid_from > now:
+            future_scope = future_scope or scope
             continue
         if scope.valid_until and scope.valid_until < now:
             continue
         if scope.expires_at and scope.expires_at < now:
             continue
 
-        # Check excluded targets first
-        is_excluded = False
-        for excl in scope.excluded_targets or []:
-            if matches_scope_pattern(target_input, str(excl)):
-                is_excluded = True
-                break
-        if is_excluded:
+        # Exclusions apply within the scope that declares them.
+        if any(matches_scope_pattern(target_input, str(excl)) for excl in scope.excluded_targets or []):
             continue
 
-        # Check scope targets list
-        for allowed in scope.targets or []:
-            if matches_scope_pattern(target_input, str(allowed)):
-                matching_scope = scope
-                break
+        allowed = any(matches_scope_pattern(target_input, str(pattern)) for pattern in scope.targets or [])
+        if not allowed and scope.value:
+            allowed = matches_scope_pattern(target_input, scope.value)
+        if not allowed:
+            continue
 
-        # Check scope single value field
-        if not matching_scope and scope.value:
-            if matches_scope_pattern(target_input, scope.value):
-                matching_scope = scope
+        if not str(scope.authorized_by or "").strip() or not str(scope.authorization_document or "").strip():
+            missing_document_scope = missing_document_scope or scope
+            continue
+        if not scope.active_testing:
+            inactive_scope = inactive_scope or scope
+            continue
 
-        if matching_scope:
-            break
-
-    if not matching_scope:
         return (
-            False,
-            f"Target '{target_input}' (host: {target_host}) is NOT in any AUTHORIZED testing scope. Scanning rejected.",
-            None,
+            True,
+            f"Target '{target_input}' authorized under scope '{scope.name}' "
+            f"(Authorized by: {scope.authorized_by}).",
+            scope,
         )
 
-    if not str(matching_scope.authorized_by or "").strip():
-        return False, f"Scope '{matching_scope.name}' has no authorizing person recorded.", matching_scope
-
-    if not str(matching_scope.authorization_document or "").strip():
-        return False, f"Scope '{matching_scope.name}' has no authorization document reference. Scanning rejected.", matching_scope
-
-    if not matching_scope.active_testing:
+    if inactive_scope:
         return (
             False,
-            f"Scope '{matching_scope.name}' has active_testing=False. Active scanning is disabled for this scope.",
-            matching_scope,
+            f"Matching scope '{inactive_scope.name}' has active_testing=False. Active scanning is disabled.",
+            inactive_scope,
+        )
+    if missing_document_scope:
+        if not str(missing_document_scope.authorized_by or "").strip():
+            detail = "no authorizing person is recorded"
+        else:
+            detail = "no authorization document reference is recorded"
+        return (
+            False,
+            f"Matching scope '{missing_document_scope.name}' has {detail}. Scanning rejected.",
+            missing_document_scope,
+        )
+    if future_scope:
+        return (
+            False,
+            f"A matching scope is not valid until {future_scope.valid_from}. Scanning rejected.",
+            future_scope,
         )
 
     return (
-        True,
-        f"Target '{target_input}' authorized under scope '{matching_scope.name}' (Authorized by: {matching_scope.authorized_by or 'SecOps'}).",
-        matching_scope,
+        False,
+        f"Target '{target_input}' (host: {target_host}) is NOT in any active, unexpired AUTHORIZED testing scope. Scanning rejected.",
+        None,
     )
