@@ -351,13 +351,6 @@ export default function WebSecurity() {
               <span>Only scan systems you are authorised to test. Ensure a valid scope and authorization document exists.</span>
             </div>
 
-            {findings.length === 0 && !scanning && (
-              <div style={{ textAlign: 'center', padding: 'var(--space-10)', color: 'var(--color-text-muted)' }}>
-                <div style={{ fontSize: '3rem', marginBottom: 'var(--space-4)' }}>🕷️</div>
-                <div style={{ fontWeight: 600, marginBottom: 8 }}>Configure a target and categories</div>
-                <div style={{ fontSize: '0.875rem' }}>Select vulnerability types on the left and launch a scan</div>
-              </div>
-            )}
 
             {scanning && (
               <div style={{ padding: 'var(--space-4)' }}>
