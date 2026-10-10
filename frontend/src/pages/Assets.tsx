@@ -13,7 +13,7 @@ const LAB_PRESETS = [
     tags: ['lab', 'owasp', 'nodejs'],
     badge: 'AUTHORIZED',
     badgeColor: '#00ff88',
-    vulnCount: '85+ known vulnerabilities',
+    vulnCount: 'Intentionally vulnerable training lab',
   },
   {
     name: 'DVWA',
@@ -24,7 +24,7 @@ const LAB_PRESETS = [
     tags: ['lab', 'php', 'dvwa'],
     badge: 'AUTHORIZED',
     badgeColor: '#00ff88',
-    vulnCount: 'SQLi · XSS · CSRF · Upload · Cmd Injection',
+    vulnCount: 'Intentionally vulnerable training lab',
   },
   {
     name: 'WebGoat',
@@ -35,7 +35,7 @@ const LAB_PRESETS = [
     tags: ['lab', 'java', 'owasp'],
     badge: 'AUTHORIZED',
     badgeColor: '#00ff88',
-    vulnCount: 'OWASP Top 10 coverage',
+    vulnCount: 'Intentionally vulnerable training lab',
   },
 ]
 
@@ -43,12 +43,28 @@ function TargetCard({
   target,
   onScan,
   isScanning,
+  onAddScope,
 }: {
   target: any
   onScan: (target: any) => void
   isScanning: boolean
+  onAddScope: (target: any) => void
 }) {
   const preset = LAB_PRESETS.find(p => p.hostname === target.hostname)
+  const { data: scopes = [], isLoading: scopesLoading } = useQuery({
+    queryKey: ['target-scopes', target.id],
+    queryFn: () => targetApi.scopes(String(target.id)),
+    retry: false,
+    refetchInterval: 15000,
+  })
+  const now = Date.now()
+  const hasScope = Array.isArray(scopes) && scopes.some((scope: any) =>
+    scope.authorization_status === 'AUTHORIZED' &&
+    scope.active_testing === true &&
+    scope.authorization_document_present === true &&
+    (!scope.valid_from || new Date(scope.valid_from).getTime() <= now) &&
+    (!scope.valid_until || new Date(scope.valid_until).getTime() > now)
+  )
 
   return (
     <div
@@ -96,22 +112,23 @@ function TargetCard({
         </div>
 
         <span
+          title={scopesLoading ? 'Checking scope status' : hasScope ? 'An active, unexpired scope has an authorization document reference' : 'Create or update a documented authorization scope before scanning'}
           style={{
             fontSize: '0.65rem',
             fontWeight: 700,
             padding: '3px 8px',
             borderRadius: 4,
-            background: 'rgba(0,255,136,0.12)',
-            border: '1px solid rgba(0,255,136,0.35)',
-            color: '#00ff88',
-            letterSpacing: '0.08em',
+            background: hasScope ? 'rgba(0,255,136,0.12)' : 'rgba(255,152,0,0.12)',
+            border: `1px solid ${hasScope ? 'rgba(0,255,136,0.35)' : 'rgba(255,152,0,0.35)'}`,
+            color: hasScope ? '#00ff88' : '#ffb74d',
+            letterSpacing: '0.05em',
             display: 'flex',
             alignItems: 'center',
             gap: 5,
           }}
         >
-          <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#00ff88', boxShadow: '0 0 6px #00ff88' }} />
-          AUTHORIZED
+          <span style={{ width: 6, height: 6, borderRadius: '50%', background: hasScope ? '#00ff88' : '#ffb74d' }} />
+          {scopesLoading ? 'CHECKING SCOPE' : hasScope ? 'DOCUMENTED SCOPE' : 'SCOPE REQUIRED'}
         </span>
       </div>
 
@@ -120,12 +137,12 @@ function TargetCard({
         {target.description}
       </p>
 
-      {/* Vuln count label */}
+      {/* Lab profile note — this is metadata about the training target, not scanner findings */}
       {preset?.vulnCount && (
         <div
           style={{
             fontSize: '0.7rem',
-            color: '#ff9800',
+            color: '#ffb74d',
             fontFamily: 'var(--font-mono)',
             background: 'rgba(255,152,0,0.08)',
             border: '1px solid rgba(255,152,0,0.2)',
@@ -135,7 +152,7 @@ function TargetCard({
             marginBottom: 'var(--space-4)',
           }}
         >
-          ⚠ {preset.vulnCount}
+          LAB PROFILE · {preset.vulnCount}
         </div>
       )}
 
@@ -163,13 +180,21 @@ function TargetCard({
         <button
           className="btn btn-primary"
           style={{ flex: 1, fontSize: '0.8rem', padding: '8px 12px' }}
-          disabled={isScanning}
+          disabled={isScanning || scopesLoading || !hasScope}
+          title={!hasScope ? 'Add a documented authorization scope before launching a scan.' : 'Launch scan using the existing authorized scope'}
           onClick={() => onScan(target)}
         >
-          {isScanning ? '⏳ Scanning...' : '⚡ Launch AI Hunt'}
+          {isScanning ? '⏳ Scanning...' : !hasScope ? '🔒 Scope required' : '⚡ Launch scan'}
         </button>
         <button
           className="btn btn-secondary"
+          style={{ fontSize: '0.8rem', padding: '8px 12px' }}
+          onClick={() => onAddScope(target)}
+        >
+          + Scope
+        </button>
+        <button
+          className="btn btn-ghost"
           style={{ fontSize: '0.8rem', padding: '8px 12px' }}
           onClick={() => {
             const url = preset?.defaultUrl || `http://${target.hostname}:80`
@@ -188,6 +213,15 @@ export default function Assets() {
   const [addForm, setAddForm] = useState({ name: '', hostname: '', description: '' })
   const [showAdd, setShowAdd] = useState(false)
   const [scanningTargets, setScanningTargets] = useState<Set<string>>(new Set())
+  const [scopeTarget, setScopeTarget] = useState<any | null>(null)
+  const [scopeForm, setScopeForm] = useState({
+    name: '',
+    value: '',
+    authorized_by: '',
+    authorization_document: '',
+    authorization_confirmed: false,
+    active_testing: true,
+  })
 
   const { data: targets = [], isLoading } = useQuery({
     queryKey: ['targets'],
@@ -214,6 +248,36 @@ export default function Assets() {
       qc.invalidateQueries({ queryKey: ['targets'] })
     },
   })
+
+  const createScopeMutation = useMutation({
+    mutationFn: (data: any) => targetApi.addScope(String(scopeTarget.id), data),
+    onSuccess: () => {
+      toast.success('Authorization scope reference saved')
+      qc.invalidateQueries({ queryKey: ['target-scopes', String(scopeTarget.id)] })
+      qc.invalidateQueries({ queryKey: ['layout-target-scopes', String(scopeTarget.id)] })
+      setScopeTarget(null)
+      setScopeForm({
+        name: '', value: '', authorized_by: '',
+        authorization_document: '', authorization_confirmed: false, active_testing: true,
+      })
+    },
+    onError: (err: any) => {
+      toast.error(String(err?.response?.data?.detail || 'Could not save authorization scope'))
+    },
+  })
+
+  const openScopeForm = (target: any) => {
+    const presetUrl = LAB_PRESETS.find(p => p.hostname === target.hostname)?.defaultUrl
+    setScopeTarget(target)
+    setScopeForm({
+      name: `${target.name} authorization scope`,
+      value: presetUrl || (String(target.hostname).includes('://') ? target.hostname : `http://${target.hostname}`),
+      authorized_by: '',
+      authorization_document: '',
+      authorization_confirmed: false,
+      active_testing: true,
+    })
+  }
 
   const launchScan = async (target: any) => {
     setScanningTargets(prev => new Set([...prev, target.id]))
@@ -350,6 +414,65 @@ export default function Assets() {
         </div>
       )}
 
+      {scopeTarget && (
+        <div className="card animate-fade-in" style={{ marginBottom: 'var(--space-5)', border: '1px solid rgba(255,152,0,0.35)' }}>
+          <div className="card-header">
+            <span className="card-title">Document authorization · {scopeTarget.name}</span>
+            <button className="btn btn-ghost btn-sm" onClick={() => setScopeTarget(null)}>Cancel</button>
+          </div>
+          <p style={{ color: 'var(--color-text-muted)', fontSize: '0.8rem', lineHeight: 1.6 }}>
+            This records your authorization attestation for a target you are permitted to test. SPAiDER checks that the reference is present but does not independently authenticate the underlying document.
+          </p>
+          <div className="grid-2" style={{ gap: 'var(--space-3)' }}>
+            <div className="form-group">
+              <label className="form-label">Scope name</label>
+              <input className="input" required minLength={3} value={scopeForm.name}
+                onChange={e => setScopeForm(p => ({ ...p, name: e.target.value }))} />
+            </div>
+            <div className="form-group">
+              <label className="form-label">Allowed URL / origin / host</label>
+              <input className="input input-mono" required value={scopeForm.value}
+                onChange={e => setScopeForm(p => ({ ...p, value: e.target.value }))} />
+            </div>
+            <div className="form-group">
+              <label className="form-label">Authorized by</label>
+              <input className="input" required minLength={3} placeholder="Name or responsible team"
+                value={scopeForm.authorized_by}
+                onChange={e => setScopeForm(p => ({ ...p, authorized_by: e.target.value }))} />
+            </div>
+            <div className="form-group">
+              <label className="form-label">Authorization document reference</label>
+              <input className="input" required minLength={3} placeholder="Program scope URL, ticket ID or document reference"
+                value={scopeForm.authorization_document}
+                onChange={e => setScopeForm(p => ({ ...p, authorization_document: e.target.value }))} />
+            </div>
+          </div>
+          <label style={{ display: 'flex', alignItems: 'flex-start', gap: 10, fontSize: '0.8rem', lineHeight: 1.5, marginBottom: 'var(--space-4)' }}>
+            <input type="checkbox" checked={scopeForm.authorization_confirmed}
+              onChange={e => setScopeForm(p => ({ ...p, authorization_confirmed: e.target.checked }))}
+              style={{ marginTop: 3 }} />
+            <span>I confirm that I own this system or have explicit written permission to test this exact scope, and the reference above identifies that authorization.</span>
+          </label>
+          <button className="btn btn-primary"
+            disabled={createScopeMutation.isPending || !scopeForm.name.trim() || !scopeForm.value.trim() ||
+              !scopeForm.authorized_by.trim() || !scopeForm.authorization_document.trim() || !scopeForm.authorization_confirmed}
+            onClick={() => createScopeMutation.mutate({
+              target_id: String(scopeTarget.id),
+              name: scopeForm.name.trim(),
+              scope_type: scopeForm.value.includes('://') ? 'url' : 'host',
+              value: scopeForm.value.trim(),
+              authorized_by: scopeForm.authorized_by.trim(),
+              authorization_document: scopeForm.authorization_document.trim(),
+              authorization_confirmed: scopeForm.authorization_confirmed,
+              active_testing: scopeForm.active_testing,
+              rate_limit: 'controlled',
+              valid_days: 365,
+            })}>
+            {createScopeMutation.isPending ? 'Saving scope…' : 'Save documented scope'}
+          </button>
+        </div>
+      )}
+
       {/* Pipeline info */}
       <div style={{ marginBottom: 'var(--space-4)' }}>
         <div
@@ -381,7 +504,7 @@ export default function Assets() {
       {/* Lab Targets grid */}
       <div style={{ marginBottom: 12 }}>
         <div style={{ fontSize: '0.7rem', fontWeight: 700, color: 'var(--color-text-muted)', letterSpacing: '0.1em', marginBottom: 12 }}>
-          AUTHORIZED LAB TARGETS — {(targets as any[]).length} REGISTERED
+          TARGET INVENTORY — {(targets as any[]).length} REGISTERED
         </div>
         {isLoading ? (
           <div style={{ color: 'var(--color-text-muted)', padding: 32, textAlign: 'center' }}>
@@ -425,6 +548,7 @@ export default function Assets() {
                 target={target}
                 onScan={launchScan}
                 isScanning={scanningTargets.has(target.id)}
+                onAddScope={openScopeForm}
               />
             ))}
           </div>
