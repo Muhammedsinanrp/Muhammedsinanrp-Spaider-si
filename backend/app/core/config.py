@@ -43,8 +43,9 @@ class Settings(BaseSettings):
     # ── AI / LLM ───────────────────────────────────────────────────────────
     openai_api_key: str = Field(default="", env="OPENAI_API_KEY")
     anthropic_api_key: str = Field(default="", env="ANTHROPIC_API_KEY")
-    default_llm_provider: str = "openai"  # openai | anthropic | local
-    default_llm_model: str = "gpt-4o"
+    default_llm_provider: str = Field(default="openai", env="DEFAULT_LLM_PROVIDER")  # openai | anthropic | local
+    default_llm_model: str = Field(default="gpt-4o", env="DEFAULT_LLM_MODEL")
+    anthropic_model: str = Field(default="claude-sonnet-5", env="ANTHROPIC_MODEL")
 
     # ── CORS ───────────────────────────────────────────────────────────────
     allowed_origins: List[str] = Field(
