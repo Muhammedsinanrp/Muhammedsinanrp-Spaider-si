@@ -116,66 +116,134 @@ WEB_VULN_CATEGORIES = {
 }
 
 
-def scan_web(targets: List[str], categories: Optional[List[str]] = None,
-             output_dir: str = "/app/scan_results") -> Dict[str, Any]:
-    """
-    Run Nuclei web security scan against targets.
+def scan_web(
+    targets: List[str],
+    categories: Optional[List[str]] = None,
+    output_dir: str = "/app/scan_results",
+    rate_limit: int = 10,
+    timeout: int = 10,
+    proxy: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Execute Nuclei and return only findings produced by the real scanner.
 
-    Args:
-        targets: List of URLs to scan (e.g. ["https://example.com"])
-        categories: List of category keys to scan (None = all)
-        output_dir: Directory to write JSON results
-
-    Returns:
-        dict with findings list and summary
+    Missing tools, non-zero exits, and timeouts are explicit errors. Demo
+    findings are deliberately never substituted for real results.
     """
+    import shutil
+
     os.makedirs(output_dir, exist_ok=True)
-    run_id = str(uuid.uuid4())[:8]
+    run_id = str(uuid.uuid4())
     output_file = os.path.join(output_dir, f"nuclei_web_{run_id}.json")
 
-    # Select templates
-    if categories:
-        templates = []
-        for cat in categories:
-            if cat in WEB_VULN_CATEGORIES:
-                templates.extend(WEB_VULN_CATEGORIES[cat]["templates"])
-    else:
-        # Default: all high-value web templates
-        templates = ["cves", "vulnerabilities", "misconfiguration", "exposures", "takeovers"]
-
-    cmd = [
-        "nuclei",
-        "-json-export", output_file,
-        "-silent",
-        "-severity", "critical,high,medium",
-        "-rate-limit", "50",
-        "-timeout", "10",
-        "-retries", "1",
-    ]
-    for tpl in templates:
-        cmd.extend(["-t", tpl])
-    for target in targets:
-        cmd.extend(["-u", target])
-
-    logger.info("Starting Nuclei web scan", targets=targets, templates=templates)
-
-    try:
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=900)
-        findings = _parse_nuclei_output(output_file)
+    nuclei_path = shutil.which("nuclei")
+    if not nuclei_path:
         return {
             "run_id": run_id,
             "targets": targets,
-            "categories_scanned": categories or list(WEB_VULN_CATEGORIES.keys()),
+            "categories_scanned": categories or [],
+            "total_findings": 0,
+            "findings": [],
+            "error": "Nuclei is not installed or is not on PATH. Install Nuclei and its templates, then retry.",
+            "demo": False,
+            "authorization_warning": AUTH_WARNING,
+        }
+
+    selected = categories or list(WEB_VULN_CATEGORIES.keys())
+    unknown = sorted(set(selected) - set(WEB_VULN_CATEGORIES))
+    if unknown:
+        return {
+            "run_id": run_id,
+            "targets": targets,
+            "categories_scanned": selected,
+            "total_findings": 0,
+            "findings": [],
+            "error": f"Unsupported categories: {', '.join(unknown)}",
+            "demo": False,
+            "authorization_warning": AUTH_WARNING,
+        }
+
+    templates = []
+    for category in selected:
+        templates.extend(WEB_VULN_CATEGORIES[category]["templates"])
+    templates = list(dict.fromkeys(templates))
+
+    command = [
+        nuclei_path, "-json-export", output_file, "-silent", "-no-color",
+        "-severity", "critical,high,medium,low,info",
+        "-rate-limit", str(max(1, min(int(rate_limit), 100))),
+        "-timeout", str(max(1, min(int(timeout), 60))),
+        "-retries", "1",
+    ]
+    for template in templates:
+        command.extend(["-t", template])
+    if proxy:
+        command.extend(["-proxy", proxy])
+    for target in targets:
+        command.extend(["-u", target])
+
+    logger.info(
+        "Starting real Nuclei web scan",
+        targets=targets,
+        categories=selected,
+        rate_limit=rate_limit,
+        timeout=timeout,
+        proxy_enabled=bool(proxy),
+    )
+
+    try:
+        completed = subprocess.run(
+            command, capture_output=True, text=True, timeout=900, check=False
+        )
+        findings = _parse_nuclei_output(output_file)
+        if completed.returncode != 0:
+            error = (completed.stderr or completed.stdout or "Nuclei exited unsuccessfully").strip()
+            if not findings:
+                return {
+                    "run_id": run_id,
+                    "targets": targets,
+                    "categories_scanned": selected,
+                    "total_findings": 0,
+                    "findings": [],
+                    "error": error[-4000:],
+                    "exit_code": completed.returncode,
+                    "output_file": output_file,
+                    "demo": False,
+                    "authorization_warning": AUTH_WARNING,
+                }
+        return {
+            "run_id": run_id,
+            "targets": targets,
+            "categories_scanned": selected,
             "total_findings": len(findings),
             "findings": findings,
             "output_file": output_file,
+            "exit_code": completed.returncode,
+            "demo": False,
             "authorization_warning": AUTH_WARNING,
         }
-    except FileNotFoundError:
-        logger.warning("Nuclei not installed — returning demo results")
-        return _demo_findings(targets)
     except subprocess.TimeoutExpired:
-        return {"error": "Scan timed out", "targets": targets, "authorization_warning": AUTH_WARNING}
+        return {
+            "run_id": run_id,
+            "targets": targets,
+            "categories_scanned": selected,
+            "total_findings": 0,
+            "findings": [],
+            "error": "Nuclei scan timed out after 900 seconds.",
+            "demo": False,
+            "authorization_warning": AUTH_WARNING,
+        }
+    except OSError as exc:
+        logger.exception("Unable to execute Nuclei")
+        return {
+            "run_id": run_id,
+            "targets": targets,
+            "categories_scanned": selected,
+            "total_findings": 0,
+            "findings": [],
+            "error": f"Unable to execute Nuclei: {exc}",
+            "demo": False,
+            "authorization_warning": AUTH_WARNING,
+        }
 
 
 def _parse_nuclei_output(output_file: str) -> List[Dict]:
@@ -218,76 +286,6 @@ def _parse_nuclei_output(output_file: str) -> List[Dict]:
                 continue
 
     return findings
-
-
-def _demo_findings(targets: List[str]) -> Dict[str, Any]:
-    """Return realistic demo findings when Nuclei is not installed."""
-    return {
-        "run_id": "demo",
-        "targets": targets,
-        "demo": True,
-        "authorization_warning": AUTH_WARNING,
-        "total_findings": 5,
-        "findings": [
-            {
-                "template_id": "CVE-2021-41773",
-                "title": "Apache HTTP Server 2.4.49 - Path Traversal (CVE-2021-41773)",
-                "description": "A flaw was found in path normalization in Apache HTTP Server 2.4.49. An attacker could use a path traversal attack to map URLs to files outside the expected document root.",
-                "severity": "CRITICAL",
-                "url": targets[0] if targets else "https://example.com",
-                "cve_ids": ["CVE-2021-41773"],
-                "cvss_score": 9.8,
-                "tags": ["cve", "apache", "path-traversal"],
-                "curl_command": f"curl -s --path-as-is '{targets[0] if targets else 'https://example.com'}/.%2e/.%2e/etc/passwd'",
-                "references": ["https://nvd.nist.gov/vuln/detail/CVE-2021-41773"],
-            },
-            {
-                "template_id": "cors-misconfiguration",
-                "title": "CORS Misconfiguration — Wildcard Origin Allowed",
-                "description": "The application reflects the Origin header in Access-Control-Allow-Origin and allows credentials, enabling cross-site requests.",
-                "severity": "HIGH",
-                "url": targets[0] if targets else "https://example.com",
-                "cve_ids": [],
-                "cvss_score": 7.5,
-                "tags": ["cors", "misconfiguration"],
-                "curl_command": f"curl -H 'Origin: https://attacker.com' -I '{targets[0] if targets else 'https://example.com'}/api/'",
-                "references": ["https://portswigger.net/web-security/cors"],
-            },
-            {
-                "template_id": "exposed-env-file",
-                "title": "Exposed .env File Containing Secrets",
-                "description": "An environment configuration file is publicly accessible, potentially exposing database credentials, API keys, and other secrets.",
-                "severity": "HIGH",
-                "url": f"{targets[0] if targets else 'https://example.com'}/.env",
-                "cve_ids": [],
-                "cvss_score": 7.5,
-                "tags": ["exposure", "config", "secrets"],
-                "references": ["https://owasp.org/www-project-top-ten/"],
-            },
-            {
-                "template_id": "graphql-introspection",
-                "title": "GraphQL Introspection Enabled",
-                "description": "GraphQL introspection is enabled in production, allowing attackers to enumerate the full API schema.",
-                "severity": "MEDIUM",
-                "url": f"{targets[0] if targets else 'https://example.com'}/graphql",
-                "cve_ids": [],
-                "cvss_score": 5.3,
-                "tags": ["graphql", "api", "exposure"],
-                "references": ["https://graphql.org/learn/introspection/"],
-            },
-            {
-                "template_id": "missing-security-headers",
-                "title": "Missing HTTP Security Headers",
-                "description": "The application is missing security headers: Content-Security-Policy, X-Frame-Options, X-Content-Type-Options.",
-                "severity": "MEDIUM",
-                "url": targets[0] if targets else "https://example.com",
-                "cve_ids": [],
-                "cvss_score": 4.3,
-                "tags": ["headers", "misconfiguration"],
-                "references": ["https://owasp.org/www-project-secure-headers/"],
-            },
-        ],
-    }
 
 
 def get_categories() -> Dict[str, Any]:
