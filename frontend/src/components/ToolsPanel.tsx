@@ -468,17 +468,22 @@ export default function ToolsPanel({ open, onClose }: ToolsPanelProps) {
     try {
       const resp = await toolApi.run(tool.id, targets, fields)
       setToolResults(prev => ({ ...prev, [tool.id]: resp }))
-      const msg = resp.mock ? `${tool.name} completed (demo data)` : `${tool.name} completed in ${resp.elapsed_ms}ms`
-      toast.success(msg, { id: tool.id })
-    } catch (err: any) {
-      // Backend not running — show helpful mock
-      const mockResp = {
-        plugin: tool.id, success: true, elapsed_ms: 0, mock: true,
-        result: { status: 'Backend offline — start backend to get real results', demo: true },
-        report: `${tool.name} — backend not reachable\nStart the backend: cd backend && uvicorn app.main:app --reload --port 8001`,
+      if (resp.mock || resp.result?.type === 'external_tool' || resp.result?.type === 'configuration_required') {
+        toast(`${tool.name}: setup guidance only; this did not execute a scan.`, { id: tool.id, icon: 'ℹ️' })
+      } else if (resp.success === false || resp.result?.error) {
+        toast.error(resp.result?.error || `${tool.name} failed.`, { id: tool.id })
+      } else {
+        toast.success(`${tool.name} completed in ${resp.elapsed_ms}ms`, { id: tool.id })
       }
-      setToolResults(prev => ({ ...prev, [tool.id]: mockResp }))
-      toast.success(`${tool.name} ran (demo mode)`, { id: tool.id })
+    } catch (err: any) {
+      const message = err?.response?.data?.detail || err?.message || `Unable to reach backend for ${tool.name}.`
+      const failure = {
+        plugin: tool.id, success: false, elapsed_ms: 0, mock: false,
+        result: { error: String(message) },
+        report: `${tool.name} was not executed. Check backend availability and authorization scope.\n${String(message)}`,
+      }
+      setToolResults(prev => ({ ...prev, [tool.id]: failure }))
+      toast.error(String(message), { id: tool.id })
     } finally {
       setRunningTools(prev => { const s = new Set(prev); s.delete(tool.id); return s })
     }
@@ -1151,7 +1156,7 @@ export default function ToolsPanel({ open, onClose }: ToolsPanelProps) {
                     })}
                     <div style={{ flex: 1 }} />
                     <div style={{ padding: '6px 12px', fontSize: '0.65rem', color: 'var(--color-text-muted)', display: 'flex', alignItems: 'center', gap: 6 }}>
-                      {toolResults[activeTool_.id].mock && <span style={{ color: '#f59e0b', fontWeight: 700 }}>DEMO</span>}
+                      {toolResults[activeTool_.id].mock && <span style={{ color: '#f59e0b', fontWeight: 700 }}>NOT EXECUTED / SETUP ONLY</span>}
                       <span style={{ fontFamily: 'var(--font-mono)' }}>{toolResults[activeTool_.id].elapsed_ms}ms</span>
                     </div>
                   </div>
