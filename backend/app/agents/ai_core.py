@@ -79,27 +79,77 @@ Map findings to MITRE ATT&CK whenever possible.
 
 
 class SPAIDERAICore:
-    """Multi-layer AI security reasoning engine."""
+    """AI analyst that only reports model-generated results or explicit unavailability."""
 
     def __init__(self):
+        configured = (settings.default_llm_provider or "openai").lower()
+        if configured == "anthropic" and settings.anthropic_api_key:
+            self.provider = "anthropic"
+        elif configured == "openai" and settings.openai_api_key:
+            self.provider = "openai"
+        elif settings.openai_api_key:
+            self.provider = "openai"
+        elif settings.anthropic_api_key:
+            self.provider = "anthropic"
+        else:
+            self.provider = None
         self.llm = self._init_llm()
 
     def _init_llm(self):
-        """Initialise the LLM client based on configuration."""
-        if settings.openai_api_key:
+        """Initialize only a configured provider; never replace missing AI with mock results."""
+        if self.provider == "openai":
             try:
                 from openai import AsyncOpenAI
                 return AsyncOpenAI(api_key=settings.openai_api_key)
-            except ImportError:
-                pass
-        if settings.anthropic_api_key:
+            except ImportError as exc:
+                logger.error("OpenAI SDK is not installed", error=str(exc))
+                return None
+        if self.provider == "anthropic":
             try:
                 import anthropic
                 return anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
-            except ImportError:
-                pass
-        logger.warning("No LLM API key configured — AI analysis will return mock responses")
+            except ImportError as exc:
+                logger.error("Anthropic SDK is not installed", error=str(exc))
+                return None
+        logger.info("No AI provider configured; AI analysis is unavailable")
         return None
+
+    def _require_llm(self):
+        if self.llm is None or self.provider is None:
+            raise RuntimeError(
+                "AI analysis is unavailable. Configure OPENAI_API_KEY or ANTHROPIC_API_KEY "
+                "and install the matching SDK in the backend environment."
+            )
+
+    @staticmethod
+    def _parse_json_response(text: str) -> Dict[str, Any]:
+        """Parse model output without silently manufacturing replacement content."""
+        raw = (text or "").strip()
+        if raw.startswith("```"):
+            raw = raw.strip("`")
+            if raw.lower().startswith("json"):
+                raw = raw[4:].strip()
+        try:
+            parsed = json.loads(raw)
+        except json.JSONDecodeError:
+            first, last = raw.find("{"), raw.rfind("}")
+            if first < 0 or last <= first:
+                raise RuntimeError("Configured AI provider returned a non-JSON response.")
+            try:
+                parsed = json.loads(raw[first:last + 1])
+            except json.JSONDecodeError as exc:
+                raise RuntimeError("Configured AI provider returned invalid JSON.") from exc
+        if not isinstance(parsed, dict):
+            raise RuntimeError("Configured AI provider returned an unexpected response shape.")
+        required = {
+            "summary", "severity", "reasoning_chain", "mitre_techniques",
+            "recommended_actions", "detection_rules", "remediation",
+            "evidence_summary", "risk_score",
+        }
+        missing = sorted(required - parsed.keys())
+        if missing:
+            raise RuntimeError("AI response omitted required fields: " + ", ".join(missing))
+        return parsed
 
     async def analyze(
         self,
@@ -110,91 +160,132 @@ class SPAIDERAICore:
         alert_ids: List[str] = [],
         db: Optional[AsyncSession] = None,
     ) -> Dict[str, Any]:
-        """Run the SPAIDER security reasoning chain."""
+        """Analyze the supplied context with the configured model."""
+        self._require_llm()
         prompt = REASONING_CHAIN_PROMPT.format(context=context, mode=mode.upper())
-
-        if self.llm is None:
-            return self._mock_analysis(context, mode)
-
         try:
-            if settings.openai_api_key:
+            if self.provider == "openai":
                 response = await self.llm.chat.completions.create(
                     model=settings.default_llm_model,
                     messages=[
-                        {"role": "system", "content": "You are SPAIDER AI Security Core. Always respond with valid JSON."},
+                        {"role": "system", "content": "You are SPAIDER AI Security Core. Return only valid JSON. Distinguish observed evidence from hypotheses; never claim a test was passed or exploited unless its evidence says so."},
                         {"role": "user", "content": prompt},
                     ],
                     response_format={"type": "json_object"},
                     temperature=0.1,
                 )
-                result = json.loads(response.choices[0].message.content)
+                content = response.choices[0].message.content or ""
             else:
-                result = self._mock_analysis(context, mode)
-
+                response = await self.llm.messages.create(
+                    model=settings.anthropic_model,
+                    max_tokens=4096,
+                    system="You are SPAIDER AI Security Core. Return only valid JSON. Distinguish observed evidence from hypotheses; never claim a test was passed or exploited unless its evidence says so.",
+                    messages=[{"role": "user", "content": prompt}],
+                    temperature=0.1,
+                )
+                content = "".join(
+                    block.text for block in (response.content or [])
+                    if getattr(block, "type", "") == "text"
+                )
+            result = self._parse_json_response(content)
+            result.setdefault("mitre_techniques", [])
+            result.setdefault("recommended_actions", [])
+            result.setdefault("detection_rules", [])
+            result.setdefault("reasoning_chain", [])
+            result.setdefault("evidence_summary", "")
             return result
-        except Exception as e:
-            logger.error("LLM analysis failed", error=str(e))
-            return self._mock_analysis(context, mode)
+        except Exception as exc:
+            logger.exception("Configured AI analysis failed", provider=self.provider, error=str(exc))
+            raise RuntimeError(f"AI analysis failed using the configured {self.provider} provider: {exc}") from exc
 
     async def query(self, question: str, db: Optional[AsyncSession] = None) -> str:
-        """Answer a natural language security question."""
-        if self.llm is None:
-            return "AI analysis unavailable — configure OPENAI_API_KEY or ANTHROPIC_API_KEY."
+        """Answer a natural-language security question using the configured model."""
+        self._require_llm()
         try:
-            response = await self.llm.chat.completions.create(
-                model=settings.default_llm_model,
-                messages=[
-                    {"role": "system", "content": "You are SPAIDER, an expert AI cybersecurity analyst. Answer concisely and accurately."},
-                    {"role": "user", "content": question},
-                ],
+            system = (
+                "You are SPAIDER, a cybersecurity analyst. Be precise, separate verified observations "
+                "from hypotheses, and do not invent scan results or CVEs."
+            )
+            if self.provider == "openai":
+                response = await self.llm.chat.completions.create(
+                    model=settings.default_llm_model,
+                    messages=[
+                        {"role": "system", "content": system},
+                        {"role": "user", "content": question},
+                    ],
+                    temperature=0.2,
+                )
+                return response.choices[0].message.content or ""
+            response = await self.llm.messages.create(
+                model=settings.anthropic_model,
+                max_tokens=2048,
+                system=system,
+                messages=[{"role": "user", "content": question}],
                 temperature=0.2,
             )
-            return response.choices[0].message.content
-        except Exception as e:
-            return f"Query failed: {str(e)}"
+            return "".join(
+                block.text for block in (response.content or [])
+                if getattr(block, "type", "") == "text"
+            )
+        except Exception as exc:
+            logger.exception("AI query failed", provider=self.provider, error=str(exc))
+            raise RuntimeError(f"AI query failed using the configured {self.provider} provider: {exc}") from exc
 
     async def generate_dashboard_summary(self, db: Optional[AsyncSession] = None) -> Dict[str, Any]:
-        """Generate an AI security posture summary."""
+        """Return database-derived security posture, not illustrative hard-coded numbers."""
+        if db is None:
+            return {"status": "unavailable", "summary": "A database session is required to calculate posture metrics."}
+
+        from sqlalchemy import func, select
+        from app.models.models import Alert, AlertStatus, Asset, Finding, ScanJob, ScanStatus, Severity
+
+        async def count(query):
+            return int((await db.execute(query)).scalar() or 0)
+
+        asset_count = await count(select(func.count(Asset.id)))
+        scan_count = await count(select(func.count(ScanJob.id)))
+        completed_scans = await count(select(func.count(ScanJob.id)).where(ScanJob.status == ScanStatus.COMPLETED))
+        failed_scans = await count(select(func.count(ScanJob.id)).where(ScanJob.status == ScanStatus.FAILED))
+        active_scans = await count(select(func.count(ScanJob.id)).where(ScanJob.status.in_([ScanStatus.PENDING, ScanStatus.RUNNING])))
+        open_alerts = await count(select(func.count(Alert.id)).where(Alert.status.in_([AlertStatus.OPEN, AlertStatus.INVESTIGATING])))
+
+        by_severity = {}
+        for severity in Severity:
+            by_severity[severity.value.lower()] = await count(
+                select(func.count(Finding.id)).where(Finding.severity == severity)
+            )
+        total_findings = sum(by_severity.values())
+        priorities = [
+            {"severity": severity, "count": by_severity[severity.lower()]}
+            for severity in ("CRITICAL", "HIGH", "MEDIUM", "LOW")
+            if by_severity[severity.lower()]
+        ]
+        if total_findings == 0 and open_alerts == 0:
+            summary = "No findings or open alerts are currently recorded in the database."
+        else:
+            summary = (
+                f"Database inventory contains {asset_count} asset(s), {total_findings} finding(s), "
+                f"and {open_alerts} open or investigating alert(s). Metrics reflect stored records; "
+                "unscanned systems and unconnected sensors are not assessed."
+            )
         return {
-            "posture_score": 72,
-            "trend": "improving",
-            "critical_findings": 3,
-            "open_alerts": 12,
-            "detection_coverage": "68%",
-            "top_risks": [
-                "Unpatched services on perimeter",
-                "Lateral movement detection gaps",
-                "Weak authentication on VPN",
-            ],
+            "status": "database_derived",
+            "summary": summary,
+            "assets": asset_count,
+            "scans": {
+                "total": scan_count,
+                "completed": completed_scans,
+                "failed": failed_scans,
+                "active": active_scans,
+            },
+            "findings": by_severity,
+            "total_findings": total_findings,
+            "open_alerts": open_alerts,
+            "top_risks": priorities,
             "recommended_priorities": [
-                "Patch CVE-2024-XXXX on web servers",
-                "Enable Suricata rule set for lateral movement",
-                "Enforce MFA on all admin accounts",
+                "Review and validate recorded critical/high findings." if any(p["severity"] in ("CRITICAL", "HIGH") for p in priorities)
+                else "Run an authorized baseline scan against a saved in-scope target." if total_findings == 0
+                else "Review findings and apply scanner-provided remediation."
             ],
         }
 
-    def _mock_analysis(self, context: str, mode: str) -> Dict[str, Any]:
-        """Mock analysis when no LLM is configured."""
-        return {
-            "summary": f"Security analysis for: {context[:80]}...",
-            "severity": "MEDIUM",
-            "risk_score": 5.5,
-            "reasoning_chain": [
-                {"step": "Asset", "content": "Target asset identified from context", "confidence": 0.9},
-                {"step": "Service", "content": "Service enumeration pending", "confidence": 0.7},
-                {"step": "Technology", "content": "Technology stack analysis pending", "confidence": 0.6},
-                {"step": "Potential Weakness", "content": "Configure an LLM API key for detailed analysis", "confidence": 0.5},
-                {"step": "Evidence", "content": "Raw evidence collected from scanner", "confidence": 0.8},
-                {"step": "Risk Context", "content": "Context-aware risk scoring enabled with LLM", "confidence": 0.5},
-                {"step": "Related CVEs", "content": "CVE correlation requires LLM configuration", "confidence": 0.4},
-                {"step": "Detection Opportunities", "content": "Detection rule generation requires LLM", "confidence": 0.5},
-                {"step": "Recommended Remediation", "content": "Set OPENAI_API_KEY for AI-powered remediation", "confidence": 0.5},
-                {"step": "Verification", "content": "Verification steps pending", "confidence": 0.6},
-            ],
-            "mitre_techniques": [],
-            "recommended_actions": ["Configure OPENAI_API_KEY or ANTHROPIC_API_KEY for AI analysis"],
-            "detection_rules": [],
-            "remediation": "Configure an LLM API key for detailed remediation guidance.",
-            "evidence_summary": "Mock analysis — no LLM configured.",
-            "authorization_warning": "⚠️ Only scan systems you are authorised to test. Ensure a valid scope and authorization document exists.",
-        }
