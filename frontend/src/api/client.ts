@@ -14,6 +14,20 @@ api.interceptors.request.use((config) => {
   return config
 })
 
+api.interceptors.response.use(
+  response => response,
+  error => {
+    const status = error?.response?.status
+    const requestUrl = String(error?.config?.url || '')
+    if (status === 401 && !requestUrl.includes('/auth/login')) {
+      localStorage.removeItem('spaider_token')
+      localStorage.removeItem('spaider_user')
+      if (window.location.hash !== '#/login') window.location.hash = '#/login'
+    }
+    return Promise.reject(error)
+  },
+)
+
 // ── API functions ─────────────────────────────────────────────────────────
 
 export const scanApi = {
