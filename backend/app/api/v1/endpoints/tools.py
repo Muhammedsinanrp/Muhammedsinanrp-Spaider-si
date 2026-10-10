@@ -6,7 +6,11 @@ No Celery / queue required — ideal for interactive tool use from the UI.
 
 import time
 from typing import List, Optional, Any
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy.ext.asyncio import AsyncSession
+from app.core.config import settings
+from app.core.database import get_db
+from app.services.scope_validator import validate_target_scope
 from pydantic import BaseModel
 import structlog
 
@@ -18,6 +22,7 @@ class ToolRunRequest(BaseModel):
     plugin: str
     targets: List[str] = []
     options: dict = {}
+    scope_id: Optional[str] = None
 
 
 class ToolRunResponse(BaseModel):
@@ -32,11 +37,33 @@ class ToolRunResponse(BaseModel):
 
 
 @router.post("/run", response_model=ToolRunResponse)
-async def run_tool(payload: ToolRunRequest):
+async def run_tool(payload: ToolRunRequest, db: AsyncSession = Depends(get_db)):
     """Execute a plugin directly and return results synchronously."""
     plugin = payload.plugin.lower().strip()
     targets = payload.targets or []
     options = payload.options or {}
+
+    # Active network/web scanners must not use implicit default targets.
+    # Every explicit target must match an active, unexpired authorization scope.
+    active_scanners = {"nmap", "nuclei", "httpheader", "masscan", "zingela"}
+    if plugin in active_scanners:
+        if not targets:
+            raise HTTPException(
+                status_code=400,
+                detail="An explicit target is required. Add it to an active authorized SPAIDER scope before scanning.",
+            )
+        if plugin in {"nuclei", "httpheader"}:
+            for target in targets:
+                parsed = __import__("urllib.parse", fromlist=["urlsplit"]).urlsplit(str(target))
+                if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"{plugin} requires a complete http:// or https:// target URL: {target}",
+                    )
+        for target in targets:
+            authorized, reason, _scope = await validate_target_scope(str(target), db, payload.scope_id)
+            if not authorized:
+                raise HTTPException(status_code=403, detail=f"AUTHORIZATION ERROR: {reason}")
 
     t0 = time.time()
     result = {}
@@ -47,7 +74,7 @@ async def run_tool(payload: ToolRunRequest):
     try:
         if plugin == "nmap":
             from app.plugins.nmap.plugin import scan, analyze, normalize, report
-            result = scan(targets=targets or ["192.168.1.0/24"],
+            result = scan(targets=targets,
                           scan_type=options.get("scan_type", "quick"),
                           ports=options.get("ports"))
             analysis = analyze(result)
@@ -55,10 +82,27 @@ async def run_tool(payload: ToolRunRequest):
             report_str = report(result)
 
         elif plugin == "nuclei":
-            from app.plugins.nuclei.plugin import scan_web
-            result = scan_web(targets=targets or ["https://example.com"],
-                              categories=[options.get("templates", "cves")],
-                              results_dir="./scan_results")
+            from app.plugins.nuclei.plugin import scan_web, WEB_VULN_CATEGORIES
+            requested = options.get("categories") or options.get("templates") or ["cves"]
+            if isinstance(requested, str):
+                requested = [requested]
+            aliases = {
+                "all": list(WEB_VULN_CATEGORIES.keys()),
+                "vulnerabilities": ["injection", "ssrf", "path_traversal", "auth", "jwt", "api", "upload"],
+                "misconfiguration": ["misconfig", "cors"],
+            }
+            categories = []
+            for choice in requested:
+                categories.extend(aliases.get(str(choice), [str(choice)]))
+            categories = list(dict.fromkeys(categories))
+            result = scan_web(
+                targets=targets,
+                categories=categories,
+                output_dir=settings.scan_results_dir,
+                rate_limit=int(options.get("rate_limit", 10)),
+                timeout=int(options.get("timeout", 10)),
+                proxy=options.get("proxy"),
+            )
 
         elif plugin == "zeek":
             from app.plugins.zeek.plugin import scan, analyze, normalize, report
@@ -152,9 +196,8 @@ async def run_tool(payload: ToolRunRequest):
 
         elif plugin == "httpheader":
             from app.plugins.httpheader.plugin import scan, analyze, normalize, report
-            effective_targets = targets if targets else ([options.get("target")] if options.get("target") else ["example.com"])
             result = scan(
-                targets=effective_targets,
+                targets=targets,
                 options=options,
             )
             analysis = analyze(result)
