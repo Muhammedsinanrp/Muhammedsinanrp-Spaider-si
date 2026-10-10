@@ -20,6 +20,11 @@ logger = structlog.get_logger(__name__)
 
 router = APIRouter()
 
+LEGACY_DEMO_SCAN_IDS = ("job-nmap-001", "job-nuclei-002", "job-wazuh-003", "job-purple-004")
+LEGACY_DEMO_ASSET_IDS = ("ast-dmz-001", "ast-db-002", "ast-dc-003", "ast-web-004")
+LEGACY_DEMO_SERVICE_IDS = ("srv-001", "srv-002", "srv-003", "srv-004", "srv-005", "srv-006")
+LEGACY_DEMO_FINDING_IDS = ("fnd-001", "fnd-002", "fnd-003", "fnd-004")
+
 
 class ScanCreate(BaseModel):
     name: str
@@ -180,7 +185,7 @@ async def list_scans(
     db: AsyncSession = Depends(get_db),
 ):
     """List scan jobs with optional filters."""
-    stmt = select(ScanJob).order_by(desc(ScanJob.created_at)).limit(limit).offset(offset)
+    stmt = select(ScanJob).where(ScanJob.id.notin_(LEGACY_DEMO_SCAN_IDS)).order_by(desc(ScanJob.created_at)).limit(limit).offset(offset)
     if mode:
         stmt = stmt.where(ScanJob.mode == mode)
     if status:
@@ -200,7 +205,7 @@ async def list_scans(
 @router.get("/{scan_id}", response_model=ScanResponse)
 async def get_scan(scan_id: str, db: AsyncSession = Depends(get_db)):
     """Get details of a specific scan job."""
-    result = await db.execute(select(ScanJob).where(ScanJob.id == scan_id))
+    result = await db.execute(select(ScanJob).where(ScanJob.id == scan_id, ScanJob.id.notin_(LEGACY_DEMO_SCAN_IDS)))
     job = result.scalar_one_or_none()
     if not job:
         raise HTTPException(status_code=404, detail="Scan job not found")
@@ -216,7 +221,7 @@ async def get_scan(scan_id: str, db: AsyncSession = Depends(get_db)):
 @router.get("/{scan_id}/events")
 async def get_scan_events(scan_id: str, db: AsyncSession = Depends(get_db)):
     """Fetch progressive real-time scan events for the 3D pipeline visualizer."""
-    stmt = select(ScanEvent).where(ScanEvent.scan_job_id == scan_id).order_by(ScanEvent.created_at)
+    stmt = select(ScanEvent).where(ScanEvent.scan_job_id == scan_id, ScanEvent.scan_job_id.notin_(LEGACY_DEMO_SCAN_IDS)).order_by(ScanEvent.created_at)
     res = await db.execute(stmt)
     events = res.scalars().all()
     return [
@@ -244,13 +249,13 @@ async def get_experiment_metrics(db: AsyncSession = Depends(get_db)):
 
     # Targets & assets
     t_count = (await db.execute(select(func.count(Target.id)))).scalar() or 0
-    a_count = (await db.execute(select(func.count(Asset.id)))).scalar() or 0
+    a_count = (await db.execute(select(func.count(Asset.id)).where(Asset.id.notin_(LEGACY_DEMO_ASSET_IDS)))).scalar() or 0
     e_count = (await db.execute(select(func.count(Endpoint.id)))).scalar() or 0
-    s_count = (await db.execute(select(func.count(Service.id)))).scalar() or 0
-    scans_total = (await db.execute(select(func.count(ScanJob.id)))).scalar() or 0
+    s_count = (await db.execute(select(func.count(Service.id)).where(Service.id.notin_(LEGACY_DEMO_SERVICE_IDS)))).scalar() or 0
+    scans_total = (await db.execute(select(func.count(ScanJob.id)).where(ScanJob.id.notin_(LEGACY_DEMO_SCAN_IDS)))).scalar() or 0
 
     # Findings metrics
-    all_findings_res = await db.execute(select(Finding))
+    all_findings_res = await db.execute(select(Finding).where(Finding.id.notin_(LEGACY_DEMO_FINDING_IDS)))
     findings = all_findings_res.scalars().all()
 
     total_findings = len(findings)
@@ -263,8 +268,16 @@ async def get_experiment_metrics(db: AsyncSession = Depends(get_db)):
         sev_name = f.severity.value if hasattr(f.severity, "value") else str(f.severity)
         sev_counts[sev_name] = sev_counts.get(sev_name, 0) + 1
 
+    scan_jobs_result = await db.execute(select(ScanJob).where(ScanJob.id.notin_(LEGACY_DEMO_SCAN_IDS)))
+    scan_jobs = scan_jobs_result.scalars().all()
+    targets_scanned = len({
+        str(target)
+        for scan_job in scan_jobs
+        for target in (scan_job.targets or [])
+    })
+
     return {
-        "targets_scanned": max(t_count, 1),
+        "targets_scanned": targets_scanned,
         "scans_executed": scans_total,
         "assets_discovered": a_count,
         "endpoints_discovered": e_count,
@@ -296,7 +309,7 @@ async def get_experiment_metrics(db: AsyncSession = Depends(get_db)):
 @router.delete("/{scan_id}/cancel")
 async def cancel_scan(scan_id: str, db: AsyncSession = Depends(get_db)):
     """Cancel a running scan job."""
-    result = await db.execute(select(ScanJob).where(ScanJob.id == scan_id))
+    result = await db.execute(select(ScanJob).where(ScanJob.id == scan_id, ScanJob.id.notin_(LEGACY_DEMO_SCAN_IDS)))
     job = result.scalar_one_or_none()
     if not job:
         raise HTTPException(status_code=404, detail="Scan job not found")

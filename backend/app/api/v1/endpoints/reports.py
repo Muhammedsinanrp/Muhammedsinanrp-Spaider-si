@@ -13,6 +13,9 @@ from app.models.models import Report, Finding, Alert, ScanJob, Asset, Severity
 
 router = APIRouter()
 
+LEGACY_DEMO_REPORT_IDS = ("rep-exec-001", "rep-tech-002")
+
+
 
 # ─── Schemas ──────────────────────────────────────────────────────────────────
 
@@ -45,7 +48,7 @@ async def _build_report_content(
 ) -> dict:
     """Aggregate data and build report content dict."""
     # Pull findings
-    stmt = select(Finding).order_by(desc(Finding.created_at)).limit(200)
+    stmt = select(Finding).where(Finding.id.notin_(('fnd-001', 'fnd-002', 'fnd-003', 'fnd-004'))).order_by(desc(Finding.created_at)).limit(200)
     if scan_job_ids:
         stmt = stmt.where(Finding.scan_job_id.in_(scan_job_ids))
     findings_result = await db.execute(stmt)
@@ -53,7 +56,7 @@ async def _build_report_content(
 
     # Pull alerts
     alerts_result = await db.execute(
-        select(Alert).order_by(desc(Alert.created_at)).limit(200)
+        select(Alert).where(Alert.id.notin_(('alt-001', 'alt-002', 'alt-003', 'alt-004'))).order_by(desc(Alert.created_at)).limit(200)
     )
     alerts = alerts_result.scalars().all()
 
@@ -147,7 +150,7 @@ async def list_reports(
     db: AsyncSession = Depends(get_db),
 ):
     result = await db.execute(
-        select(Report).order_by(desc(Report.created_at)).limit(limit)
+        select(Report).where(Report.id.notin_(LEGACY_DEMO_REPORT_IDS)).order_by(desc(Report.created_at)).limit(limit)
     )
     reports = result.scalars().all()
     return [
@@ -193,7 +196,7 @@ async def generate_report(
 
 @router.get("/{report_id}")
 async def get_report(report_id: str, db: AsyncSession = Depends(get_db)):
-    result = await db.execute(select(Report).where(Report.id == report_id))
+    result = await db.execute(select(Report).where(Report.id == report_id, Report.id.notin_(LEGACY_DEMO_REPORT_IDS)))
     report = result.scalar_one_or_none()
     if not report:
         raise HTTPException(status_code=404, detail="Report not found")
@@ -243,7 +246,7 @@ async def generate_scan_report(
 @router.get("/{report_id}/markdown")
 async def get_report_markdown(report_id: str, db: AsyncSession = Depends(get_db)):
     """Export report as formatted Markdown document."""
-    result = await db.execute(select(Report).where(Report.id == report_id))
+    result = await db.execute(select(Report).where(Report.id == report_id, Report.id.notin_(LEGACY_DEMO_REPORT_IDS)))
     report = result.scalar_one_or_none()
     if not report:
         raise HTTPException(status_code=404, detail="Report not found")

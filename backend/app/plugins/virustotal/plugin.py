@@ -24,8 +24,11 @@ def scan(target: str, scan_type: str = "url", api_key: Optional[str] = None) -> 
     """Scan a file hash, URL, IP, or domain via VirusTotal API v3."""
     key = api_key or os.getenv("VIRUSTOTAL_API_KEY", "")
     if not key:
-        logger.warning("No VirusTotal API key — returning mock data")
-        return _mock_result(target, scan_type)
+        return {
+            "error": "VirusTotal API key is not configured. Set VIRUSTOTAL_API_KEY or provide an API key for this request.",
+            "configured": False,
+            "authorization_warning": AUTH_WARNING,
+        }
 
     try:
         import vt  # pip install vt-py
@@ -63,8 +66,11 @@ def scan(target: str, scan_type: str = "url", api_key: Optional[str] = None) -> 
         return result
 
     except ImportError:
-        logger.warning("vt-py not installed — pip install vt-py")
-        return _mock_result(target, scan_type)
+        return {
+            "error": "The VirusTotal Python client is not installed. Install vt-py in the backend environment.",
+            "configured": bool(key),
+            "authorization_warning": AUTH_WARNING,
+        }
     except Exception as e:
         logger.error("VirusTotal API error", error=str(e))
         return {"error": str(e), "authorization_warning": AUTH_WARNING}
@@ -82,46 +88,6 @@ def _extract_verdicts(obj) -> list:
                 "result": res.get("result", ""),
             })
     return verdicts
-
-
-def _mock_result(target: str, scan_type: str) -> dict:
-    base = {
-        "target": target,
-        "scan_type": scan_type,
-        "mock": True,
-        "authorization_warning": AUTH_WARNING,
-    }
-    if scan_type == "url":
-        base.update({
-            "malicious": 3, "suspicious": 1, "undetected": 64, "harmless": 5,
-            "total_engines": 73, "reputation": -10,
-            "tags": ["phishing"], "categories": {"Forcepoint ThreatSeeker": "phishing"},
-            "verdicts": [
-                {"engine": "Google Safebrowsing", "category": "malicious", "result": "phishing"},
-                {"engine": "CRDF", "category": "malicious", "result": "malicious"},
-                {"engine": "Avira", "category": "suspicious", "result": "suspicious"},
-            ],
-        })
-    elif scan_type in ("ip", "domain"):
-        base.update({
-            "malicious": 0, "suspicious": 0, "undetected": 70, "harmless": 3,
-            "total_engines": 73, "reputation": 5,
-            "tags": [], "categories": {"Forcepoint ThreatSeeker": "business"},
-            "verdicts": [],
-        })
-    else:  # hash / file
-        base.update({
-            "malicious": 48, "suspicious": 2, "undetected": 18, "harmless": 0,
-            "total_engines": 68, "reputation": -80,
-            "tags": ["trojan", "ransomware"],
-            "categories": {},
-            "verdicts": [
-                {"engine": "Kaspersky", "category": "malicious", "result": "Trojan.Generic"},
-                {"engine": "Microsoft", "category": "malicious", "result": "Ransom:Win32/Exxroute"},
-                {"engine": "ESET-NOD32", "category": "malicious", "result": "Win32/Filecoder"},
-            ],
-        })
-    return base
 
 
 def analyze(results: dict) -> dict:

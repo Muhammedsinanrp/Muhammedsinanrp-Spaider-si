@@ -39,42 +39,194 @@ def get_db_sync():
     return Session()
 
 
-@celery_app.task(name="app.workers.tasks.run_web_security_scan", bind=True, max_retries=2)
-def run_web_security_scan(self, targets: List[str], categories: List[str],
-                          rate_limit: int = 50, timeout: int = 10,
-                          proxy: Optional[str] = None):
-    """Run Nuclei web vulnerability scan across selected categories."""
-    logger.info("Starting web security scan", targets=targets, categories=categories)
+@celery_app.task(name="app.workers.tasks.run_web_security_scan", bind=True, max_retries=0)
+def run_web_security_scan(
+    self,
+    targets: List[str],
+    categories: List[str],
+    rate_limit: int = 10,
+    timeout: int = 10,
+    proxy: Optional[str] = None,
+    scan_id: Optional[str] = None,
+):
+    """Run Nuclei and persist its real findings and job state."""
+    from app.models.models import Finding, ScanEvent, ScanJob, ScanStatus, Severity
     from app.plugins.nuclei.plugin import scan_web
-    result = scan_web(targets, categories, settings.scan_results_dir)
 
-    # Persist findings to DB
-    if result.get("findings"):
-        try:
-            from app.models.models import Finding, Severity
-            db = get_db_sync()
-            sev_map = {"CRITICAL": Severity.CRITICAL, "HIGH": Severity.HIGH,
-                       "MEDIUM": Severity.MEDIUM, "LOW": Severity.LOW, "INFO": Severity.INFO}
-            for f in result["findings"]:
-                finding = Finding(
-                    id=uuid.uuid4(),
-                    title=f.get("title", "Unknown"),
-                    description=f.get("description", ""),
-                    severity=sev_map.get(f.get("severity", "INFO"), Severity.INFO),
+    db = get_db_sync()
+    try:
+        if scan_id:
+            job = db.query(ScanJob).filter(ScanJob.id == scan_id).first()
+            if job:
+                job.status = ScanStatus.RUNNING
+                job.started_at = job.started_at or datetime.utcnow()
+                job.progress = max(job.progress or 0, 10)
+                db.add(ScanEvent(
+                    id=str(uuid.uuid4()),
+                    scan_job_id=scan_id,
+                    stage="WEB_SCAN",
+                    progress=10,
+                    message="Nuclei scanner execution started.",
+                    data={"categories": categories, "target_count": len(targets)},
+                ))
+                db.commit()
+
+        result = scan_web(
+            targets,
+            categories,
+            settings.scan_results_dir,
+            rate_limit=rate_limit,
+            timeout=timeout,
+            proxy=proxy,
+        )
+
+        scan_error = result.get("error")
+        persisted_count = 0
+        if not scan_error:
+            severity_map = {
+                "CRITICAL": Severity.CRITICAL,
+                "HIGH": Severity.HIGH,
+                "MEDIUM": Severity.MEDIUM,
+                "LOW": Severity.LOW,
+                "INFO": Severity.INFO,
+            }
+            for item in result.get("findings", []):
+                url = str(item.get("url") or "")
+                template_id = str(item.get("template_id") or "nuclei-unknown")
+                digest = __import__("hashlib").sha256(
+                    f"{template_id}|{url}".encode("utf-8")
+                ).hexdigest()
+                existing = db.query(Finding).filter(Finding.dedup_hash == digest, Finding.scan_job_id == scan_id).first()
+                if existing:
+                    existing.occurrence_count = (existing.occurrence_count or 1) + 1
+                    continue
+
+                cves = item.get("cve_ids") or []
+                if isinstance(cves, str):
+                    cves = [cves]
+                cwes = item.get("cwe_ids") or []
+                if isinstance(cwes, str):
+                    cwes = [cwes]
+                severity = severity_map.get(str(item.get("severity", "INFO")).upper(), Severity.INFO)
+                try:
+                    cvss = float(item["cvss_score"]) if item.get("cvss_score") is not None else None
+                except (ValueError, TypeError):
+                    cvss = None
+
+                db.add(Finding(
+                    id=str(uuid.uuid4()),
+                    title=str(item.get("title") or template_id)[:512],
+                    description=str(item.get("description") or ""),
+                    severity=severity,
+                    confidence=0.95 if item.get("matcher_name") else 0.80,
+                    risk_score=cvss or 0.0,
+                    asset_value=__import__("urllib.parse", fromlist=["urlsplit"]).urlsplit(url).hostname if url else None,
+                    endpoint=url[:1024] if url else None,
+                    protocol="https" if url.startswith("https://") else "http",
+                    cve=cves[0] if cves else None,
+                    cwe=cwes[0] if cwes else None,
+                    cvss=cvss,
+                    scanner="nuclei",
                     plugin="nuclei",
-                    template_id=f.get("template_id"),
-                    cve_ids=f.get("cve_ids", []),
-                    references=f.get("references", []),
-                    request_raw=f.get("curl_command", ""),
-                    raw_data=f,
-                )
-                db.add(finding)
-            db.commit()
-            db.close()
-        except Exception as e:
-            logger.error("Failed to store web findings", error=str(e))
+                    template_id=template_id[:128],
+                    cve_ids=cves,
+                    cvss_score=cvss,
+                    cwe_ids=cwes,
+                    mitre_techniques=[],
+                    affected_url=url[:1024] if url else None,
+                    request_raw=str(item.get("request") or ""),
+                    response_raw=str(item.get("response") or ""),
+                    evidence=json.dumps({
+                        "matcher_name": item.get("matcher_name"),
+                        "extracted_results": item.get("extracted_results") or [],
+                        "matched_url": url,
+                    }),
+                    remediation="Review the matched Nuclei template and remediate the affected component or configuration.",
+                    references=item.get("references") or [],
+                    tags=item.get("tags") or [],
+                    raw_data=item,
+                    curl_poc=str(item.get("curl_command") or ""),
+                    dedup_hash=digest,
+                    occurrence_count=1,
+                    status="open",
+                    scan_job_id=scan_id,
+                ))
+                persisted_count += 1
 
-    return result
+        if scan_id:
+            job = db.query(ScanJob).filter(ScanJob.id == scan_id).first()
+            if job:
+                job.status = ScanStatus.FAILED if scan_error else ScanStatus.COMPLETED
+                job.progress = 100
+                job.completed_at = datetime.utcnow()
+                job.error_msg = str(scan_error)[:4000] if scan_error else None
+                job.result_file = result.get("output_file")
+                job.raw_output = json.dumps({
+                    "run_id": result.get("run_id"),
+                    "total_findings": result.get("total_findings", 0),
+                    "persisted_findings": persisted_count,
+                    "categories_scanned": result.get("categories_scanned", categories),
+                    "error": scan_error,
+                    "exit_code": result.get("exit_code"),
+                    "demo": False,
+                })
+                db.add(ScanEvent(
+                    id=str(uuid.uuid4()),
+                    scan_job_id=scan_id,
+                    stage="FAILED" if scan_error else "REPORT",
+                    progress=100,
+                    message=("Web scan failed: " + str(scan_error)[:450]) if scan_error
+                            else f"Web scan completed. {result.get('total_findings', 0)} real finding(s) returned; {persisted_count} new record(s) persisted.",
+                    data={
+                        "total_findings": result.get("total_findings", 0),
+                        "persisted_findings": persisted_count,
+                        "run_id": result.get("run_id"),
+                    },
+                ))
+        db.commit()
+        logger.info(
+            "Web security scan finished",
+            scan_id=scan_id,
+            error=bool(scan_error),
+            findings=result.get("total_findings", 0),
+            persisted=persisted_count,
+        )
+        result["persisted_findings"] = persisted_count
+        result["demo"] = False
+        return result
+    except Exception as exc:
+        db.rollback()
+        logger.exception("Web security scan task failed", scan_id=scan_id, error=str(exc))
+        if scan_id:
+            try:
+                job = db.query(ScanJob).filter(ScanJob.id == scan_id).first()
+                if job:
+                    job.status = ScanStatus.FAILED
+                    job.progress = 100
+                    job.completed_at = datetime.utcnow()
+                    job.error_msg = str(exc)[:4000]
+                    db.add(ScanEvent(
+                        id=str(uuid.uuid4()),
+                        scan_job_id=scan_id,
+                        stage="FAILED",
+                        progress=100,
+                        message=f"Web scan failed: {str(exc)[:450]}",
+                        data={},
+                    ))
+                    db.commit()
+            except Exception:
+                db.rollback()
+        return {
+            "run_id": None,
+            "targets": targets,
+            "categories_scanned": categories,
+            "total_findings": 0,
+            "findings": [],
+            "error": str(exc),
+            "demo": False,
+        }
+    finally:
+        db.close()
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -116,16 +268,19 @@ def run_scan(self, scan_id: str, plugin: str, targets: List[str], options: dict)
                 db = get_db_sync()
                 job = db.query(ScanJob).filter(ScanJob.id == scan_id).first()
                 if job:
-                    job.status = ScanStatus.COMPLETED
+                    scan_error = res.get("error") if isinstance(res, dict) else None
+                    job.status = ScanStatus.FAILED if scan_error else ScanStatus.COMPLETED
                     job.progress = 100
                     job.completed_at = datetime.utcnow()
+                    job.error_msg = str(scan_error)[:4000] if scan_error else None
                     event = ScanEvent(
                         id=str(uuid.uuid4()),
                         scan_job_id=scan_id,
-                        stage="REPORT",
+                        stage="FAILED" if scan_error else "REPORT",
                         progress=100,
-                        message="Scan pipeline successfully completed. Normalization, Deduplication & AI analysis enriched.",
-                        data={"result": str(res)[:200]},
+                        message=(f"Scan failed: {str(scan_error)[:400]}" if scan_error else
+                                 "Real scan output processed and saved."),
+                        data={"error": str(scan_error)[:1000]} if scan_error else {"result": str(res)[:200]},
                     )
                     db.add(event)
                     db.commit()
@@ -205,8 +360,8 @@ def _execute_nmap_scan(targets: List[str], scan_type: str = "full",
         logger.error("Nmap scan timed out")
         return {"error": "Scan timed out", "targets": targets}
     except FileNotFoundError:
-        logger.warning("Nmap not found, returning mock data")
-        return _mock_nmap_result(targets)
+        logger.error("Nmap executable not found; no scan was performed")
+        return {"error": "Nmap executable not found. Install Nmap and ensure it is on PATH.", "targets": targets, "mock": False}
 
 
 @celery_app.task(name="app.workers.tasks.run_nmap_scan", bind=True, max_retries=2)
@@ -323,44 +478,19 @@ def _store_nmap_results(hosts: list, scan_id: Optional[str]):
         logger.error("Failed to store Nmap results", error=str(e))
 
 
-def _mock_nmap_result(targets: list) -> dict:
-    """Return mock scan data when Nmap is not available."""
-    return {
-        "hosts": 3,
-        "mock": True,
-        "result": [
-            {"ip": "192.168.1.1", "hostname": "router.local", "os": "Linux", "ports": [
-                {"port": 22, "name": "ssh", "state": "open"},
-                {"port": 80, "name": "http", "state": "open"},
-            ]},
-            {"ip": "192.168.1.10", "hostname": "web01.local", "os": "Ubuntu 22.04", "ports": [
-                {"port": 80, "name": "http", "state": "open"},
-                {"port": 443, "name": "https", "state": "open"},
-                {"port": 22, "name": "ssh", "state": "open"},
-            ]},
-            {"ip": "192.168.1.20", "hostname": "db01.local", "os": "Debian 11", "ports": [
-                {"port": 5432, "name": "postgresql", "state": "open"},
-                {"port": 22, "name": "ssh", "state": "open"},
-            ]},
-        ]
-    }
-
-
 # ─────────────────────────────────────────────────────────────────────────────
 #  RED — Nuclei (web/API scanning)
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _execute_nuclei_scan(targets: List[str], templates: List[str] = None, scan_id: Optional[str] = None):
-    """Run Nuclei template-based vulnerability scanning."""
+    """Run Nuclei and persist only findings actually emitted by the scanner."""
     logger.info("Starting Nuclei scan", targets=targets)
-
-    result_file = os.path.join(settings.scan_results_dir, f"nuclei_{uuid.uuid4()}.json")
+    result_file = os.path.join(settings.scan_results_dir, f"nuclei_{uuid.uuid4()}.jsonl")
     os.makedirs(settings.scan_results_dir, exist_ok=True)
 
-    cmd = [settings.nuclei_path, "-json-export", result_file]
+    cmd = [settings.nuclei_path, "-jsonl-export", result_file, "-no-color", "-rate-limit", "10", "-timeout", "10", "-retries", "1"]
     for target in targets:
         cmd.extend(["-u", target])
-
     if templates:
         for tpl in templates:
             cmd.extend(["-t", tpl])
@@ -368,143 +498,29 @@ def _execute_nuclei_scan(targets: List[str], templates: List[str] = None, scan_i
         cmd.extend(["-t", "cves", "-t", "vulnerabilities", "-t", "misconfiguration"])
 
     try:
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
+        completed = subprocess.run(cmd, capture_output=True, text=True, timeout=600, check=False)
         findings = _parse_nuclei_json(result_file, scan_id, targets[0] if targets else "")
-        return {"findings": len(findings), "result_file": result_file}
-    except (FileNotFoundError, subprocess.TimeoutExpired) as e:
-        logger.warning("Nuclei not available or timed out, generating lab findings", error=str(e))
-        findings = _generate_lab_findings(targets, scan_id)
-        return {"mock": True, "findings": len(findings)}
+        if completed.returncode != 0 and not findings:
+            message = (completed.stderr or completed.stdout or "Nuclei exited unsuccessfully").strip()
+            return {"error": message[-4000:], "targets": targets, "result_file": result_file, "mock": False}
+        return {
+            "findings": len(findings),
+            "result_file": result_file,
+            "targets": targets,
+            "mock": False,
+            "exit_code": completed.returncode,
+        }
+    except FileNotFoundError:
+        logger.error("Nuclei executable not found; no scan was performed")
+        return {"error": "Nuclei executable not found. Install Nuclei and ensure templates are available.", "targets": targets, "mock": False}
+    except subprocess.TimeoutExpired:
+        logger.error("Nuclei scan timed out", targets=targets)
+        return {"error": "Nuclei scan timed out after 600 seconds.", "targets": targets, "mock": False}
 
 
 @celery_app.task(name="app.workers.tasks.run_nuclei_scan", bind=True, max_retries=2)
 def run_nuclei_scan(self, targets: List[str], templates: List[str] = None, scan_id: Optional[str] = None):
     return _execute_nuclei_scan(targets, templates, scan_id)
-
-
-def _generate_lab_findings(targets: List[str], scan_id: Optional[str]) -> list:
-    """Generate normalized lab findings for target (e.g. Juice Shop / DVWA lab)."""
-    target = targets[0] if targets else "http://localhost:3001"
-    clean_host = target.replace("http://", "").replace("https://", "").split(":")[0]
-
-    lab_items = [
-        {
-            "template-id": "cwe-89-sqli-rest",
-            "info": {
-                "name": "SQL Injection in Search Query Parameter (q)",
-                "severity": "critical",
-                "description": "Unsanitized user input in search query allows arbitrary SQL execution against backend SQLite/Postgres database.",
-                "classification": {"cwe-id": ["CWE-89"], "cvss-score": 9.8},
-                "tags": ["sqli", "owasp-top10", "injection"],
-                "remediation": "Use parameterized queries or prepared statements instead of dynamic SQL string interpolation.",
-            },
-            "matched-at": f"{target}/rest/products/search?q=' OR 1=1--",
-            "curl-command": f"curl -s '{target}/rest/products/search?q=%27%20OR%201=1--'",
-            "extracted-results": ["SQL syntax error detected: SELECT * FROM Products WHERE name LIKE '%' OR 1=1--"],
-        },
-        {
-            "template-id": "cwe-639-bola-basket",
-            "info": {
-                "name": "Broken Object Level Authorization (BOLA) in Basket Access",
-                "severity": "high",
-                "description": "Authenticated users can inspect and modify carts of other users by altering the numeric basket ID in the URL.",
-                "classification": {"cwe-id": ["CWE-639"], "cvss-score": 8.6},
-                "tags": ["bola", "idor", "auth"],
-                "remediation": "Validate session ownership against the requested basket object ID prior to database retrieval.",
-            },
-            "matched-at": f"{target}/rest/basket/2",
-            "curl-command": f"curl -s '{target}/rest/basket/2' -H 'Authorization: Bearer <token>'",
-            "extracted-results": ['{"status":"success","data":{"id":2,"userId":2,"Products":[{"id":1,"name":"Apple Juice"}]}}'],
-        },
-        {
-            "template-id": "cwe-22-path-traversal-ftp",
-            "info": {
-                "name": "Path Traversal & Sensitive File Disclosure via /ftp Endpoint",
-                "severity": "high",
-                "description": "Directory traversal sequence allows reading files outside intended static documentation root.",
-                "classification": {"cwe-id": ["CWE-22"], "cvss-score": 7.5},
-                "tags": ["traversal", "lfi"],
-                "remediation": "Validate canonicalized file paths and deny requests containing '..' or null bytes.",
-            },
-            "matched-at": f"{target}/ftp/package.json.bak",
-            "curl-command": f"curl -s '{target}/ftp/package.json.bak%2500.md'",
-            "extracted-results": ['"name": "juice-shop", "version": "16.0.0", "dependencies": {...}'],
-        },
-        {
-            "template-id": "cwe-79-xss-search",
-            "info": {
-                "name": "Reflected Cross-Site Scripting (XSS) in Search Bar",
-                "severity": "medium",
-                "description": "Unescaped search terms reflected directly in the DOM without HTML entity encoding.",
-                "classification": {"cwe-id": ["CWE-79"], "cvss-score": 6.1},
-                "tags": ["xss", "client-side"],
-                "remediation": "Sanitize and HTML-encode user inputs before rendering in the document context.",
-            },
-            "matched-at": f"{target}/#/search?q=<iframe src=\"javascript:alert(1)\">",
-            "curl-command": f"curl -s '{target}/#/search?q=%3Ciframe%20src=%22javascript:alert(1)%22%3E'",
-        },
-    ]
-
-    stored = []
-    db = get_db_sync()
-    try:
-        from app.services.normalizer import normalize_nuclei_item, save_or_deduplicate_finding
-        from app.services.ai_analyzer import generate_ai_analysis_for_finding
-        from app.models.models import Endpoint, ScanEvent
-
-        for item in lab_items:
-            uf = normalize_nuclei_item(item, default_target=target)
-            finding, is_new = save_or_deduplicate_finding(db, uf, scan_job_id=scan_id)
-
-            # Store discovered endpoint
-            existing_ep = db.query(Endpoint).filter(Endpoint.path == uf.endpoint).first()
-            if not existing_ep:
-                ep = Endpoint(
-                    id=str(uuid.uuid4()),
-                    url=f"{target}{uf.endpoint}",
-                    path=uf.endpoint,
-                    method="GET",
-                    status_code=200,
-                )
-                db.add(ep)
-
-            # Run AI Analyzer on scanner evidence
-            ai_data = generate_ai_analysis_for_finding({
-                "title": uf.title,
-                "severity": uf.severity,
-                "asset": uf.asset,
-                "endpoint": uf.endpoint,
-                "evidence": uf.evidence,
-                "curl_poc": uf.curl_poc,
-                "cvss": uf.cvss,
-                "cwe": uf.cwe,
-                "confidence": uf.confidence,
-                "port": uf.port,
-            })
-            finding.ai_analysis = ai_data
-            finding.risk_score = ai_data.get("risk_score", 5.0)
-
-            stored.append(finding)
-
-        # Log completion event
-        if scan_id:
-            event = ScanEvent(
-                id=str(uuid.uuid4()),
-                scan_job_id=scan_id,
-                stage="VALIDATION",
-                progress=90,
-                message=f"Discovered {len(stored)} validated vulnerabilities with reproduction proof.",
-                data={"findings_count": len(stored)},
-            )
-            db.add(event)
-
-        db.commit()
-    except Exception as e:
-        logger.error("Failed to store lab findings", error=str(e))
-    finally:
-        db.close()
-
-    return stored
 
 
 def _parse_nuclei_json(result_file: str, scan_id: Optional[str], default_target: str = "") -> list:

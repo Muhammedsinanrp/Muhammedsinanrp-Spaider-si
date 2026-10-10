@@ -13,6 +13,9 @@ from app.models.models import Asset, Service, AssetType, Severity
 
 router = APIRouter()
 
+LEGACY_DEMO_ASSET_IDS = ("ast-dmz-001", "ast-db-002", "ast-dc-003", "ast-web-004")
+
+
 
 class ServiceOut(BaseModel):
     id: str
@@ -60,7 +63,7 @@ async def list_assets(
     search: Optional[str] = None,
     db: AsyncSession = Depends(get_db),
 ):
-    stmt = select(Asset).order_by(desc(Asset.created_at)).limit(limit).offset(offset)
+    stmt = select(Asset).where(Asset.id.notin_(LEGACY_DEMO_ASSET_IDS)).order_by(desc(Asset.created_at)).limit(limit).offset(offset)
     if asset_type:
         stmt = stmt.where(Asset.asset_type == asset_type)
     if search:
@@ -107,7 +110,7 @@ async def create_asset(payload: AssetCreate, db: AsyncSession = Depends(get_db))
 @router.get("/graph")
 async def get_asset_graph(db: AsyncSession = Depends(get_db)):
     """Return nodes + edges for the network topology graph."""
-    result = await db.execute(select(Asset).where(Asset.is_active == True))
+    result = await db.execute(select(Asset).where(Asset.is_active == True, Asset.id.notin_(LEGACY_DEMO_ASSET_IDS)))
     assets = result.scalars().all()
     nodes = []
     edges = []

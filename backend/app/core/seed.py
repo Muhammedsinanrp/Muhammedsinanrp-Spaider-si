@@ -1,4 +1,4 @@
-"""SPAIDER Database Seeder — Populates rich initial demonstration & security data."""
+"""SPAIDER seeder for development accounts, controlled lab scopes, and ATT&CK reference data."""
 
 import asyncio
 from datetime import datetime, timedelta
@@ -6,6 +6,7 @@ from sqlalchemy import select, delete
 import structlog
 
 from app.core.database import engine, Base, AsyncSessionLocal
+from app.core.config import settings
 from app.models.models import (
     User, Scope, Target, Asset, Service, ScanJob, Finding, Alert,
     MalwareSample, IOC, MitreTechnique, Report,
@@ -28,33 +29,69 @@ async def seed_database(force: bool = False):
         res = await db.execute(select(Target))
         existing_targets = res.scalars().all()
         if existing_targets and not force:
-            logger.info("Database already seeded with targets, skipping.")
+            is_development = settings.environment.lower() in {"development", "dev", "test"}
+            if not settings.spaider_admin_password and not is_development:
+                raise RuntimeError(
+                    "SPAIDER_ADMIN_PASSWORD must be set before using an existing database in production."
+                )
+            # When an administrator password is explicitly configured, apply it
+            # to the seeded admin account on upgrades as well as fresh installs.
+            if settings.spaider_admin_password:
+                admin_result = await db.execute(select(User).where(User.username == "admin"))
+                admin_user = admin_result.scalar_one_or_none()
+                if admin_user:
+                    admin_user.hashed_password = hash_password(settings.spaider_admin_password)
+            if settings.spaider_analyst_password:
+                analyst_result = await db.execute(select(User).where(User.username == "analyst"))
+                analyst_user = analyst_result.scalar_one_or_none()
+                if analyst_user:
+                    analyst_user.hashed_password = hash_password(settings.spaider_analyst_password)
+            await db.commit()
+            logger.info("Database already contains targets; preserved operational records and applied configured password rotation if supplied.")
             return
 
         logger.info("Seeding SPAIDER cyber intelligence platform data...")
 
         # 1. Users
+        is_development = settings.environment.lower() in {"development", "dev", "test"}
+        admin_password = settings.spaider_admin_password
+        analyst_password = settings.spaider_analyst_password
+        if not admin_password:
+            if not is_development:
+                raise RuntimeError(
+                    "SPAIDER_ADMIN_PASSWORD must be set before seeding a non-development environment."
+                )
+            admin_password = "admin123"
+            logger.warning(
+                "Development administrator password is using the built-in local default. "
+                "Set SPAIDER_ADMIN_PASSWORD before exposing this environment."
+            )
+        if not analyst_password and is_development:
+            analyst_password = "analyst123"
+            logger.warning("Development analyst password is using the built-in local default.")
+
         admin_user = User(
             id="usr-admin-001",
             username="admin",
             email="admin@spaider.internal",
-            hashed_password=hash_password("admin123"),
-            full_name="Chief Information Security Officer",
+            hashed_password=hash_password(admin_password),
+            full_name="SPAIDER Administrator",
             role="admin",
             is_active=True,
             is_superuser=True,
         )
-        analyst_user = User(
-            id="usr-analyst-002",
-            username="analyst",
-            email="analyst@spaider.internal",
-            hashed_password=hash_password("analyst123"),
-            full_name="Lead Security Researcher",
-            role="analyst",
-            is_active=True,
-            is_superuser=False,
-        )
-        db.add_all([admin_user, analyst_user])
+        db.add(admin_user)
+        if analyst_password:
+            db.add(User(
+                id="usr-analyst-002",
+                username="analyst",
+                email="analyst@spaider.internal",
+                hashed_password=hash_password(analyst_password),
+                full_name="SPAIDER Analyst",
+                role="analyst",
+                is_active=True,
+                is_superuser=False,
+            ))
         await db.flush()
 
         # ─── 2. Lab Targets (controlled test environment) ────────────────────
@@ -100,6 +137,7 @@ async def seed_database(force: bool = False):
             destructive_testing=False,
             rate_limit="controlled",
             authorized_by="Lab Administrator",
+            authorization_document="LOCAL_DEV_LAB_ATTESTATION: controlled OWASP Juice Shop container",
             valid_from=datetime.utcnow() - timedelta(days=30),
             valid_until=datetime.utcnow() + timedelta(days=365),
         )
@@ -117,6 +155,7 @@ async def seed_database(force: bool = False):
             destructive_testing=False,
             rate_limit="controlled",
             authorized_by="Lab Administrator",
+            authorization_document="LOCAL_DEV_LAB_ATTESTATION: controlled DVWA container",
             valid_from=datetime.utcnow() - timedelta(days=30),
             valid_until=datetime.utcnow() + timedelta(days=365),
         )
@@ -134,310 +173,15 @@ async def seed_database(force: bool = False):
             destructive_testing=False,
             rate_limit="controlled",
             authorized_by="Lab Administrator",
+            authorization_document="LOCAL_DEV_LAB_ATTESTATION: controlled WebGoat container",
             valid_from=datetime.utcnow() - timedelta(days=30),
             valid_until=datetime.utcnow() + timedelta(days=365),
         )
-        scope_infra = Scope(
-            id="scp-corp-001",
-            name="Primary Infrastructure Scope",
-            description="Core corporate network and DMZ perimeter systems",
-            authorization_status="AUTHORIZED",
-            targets=["192.168.1.0/24", "10.0.0.0/16"],
-            excluded_targets=["192.168.1.254"],
-            active_testing=True,
-            destructive_testing=False,
-            rate_limit="controlled",
-            authorized_by="Security Operations Committee",
-            valid_from=datetime.utcnow() - timedelta(days=30),
-            valid_until=datetime.utcnow() + timedelta(days=365),
-        )
-        db.add_all([scope_js, scope_dvwa, scope_webgoat, scope_infra])
+        db.add_all([scope_js, scope_dvwa, scope_webgoat])
         await db.flush()
 
-        # 4. Assets
-        asset1 = Asset(
-            id="ast-dmz-001",
-            name="DMZ Perimeter Gateway",
-            asset_type=AssetType.HOST,
-            value="192.168.1.1",
-            description="Main ingress edge firewall and reverse proxy router",
-            os="Linux",
-            os_version="Ubuntu 22.04 LTS",
-            criticality=Severity.CRITICAL,
-            tags=["dmz", "perimeter", "ingress", "edge"],
-            extra_data={"datacenter": "us-east-1", "managed_by": "secops"},
-            last_seen=datetime.utcnow(),
-            is_active=True,
-        )
-        asset2 = Asset(
-            id="ast-db-002",
-            name="Core Database Cluster",
-            asset_type=AssetType.HOST,
-            value="192.168.1.10",
-            description="Primary encrypted transactional database repository",
-            os="Linux",
-            os_version="Debian 12 Bookworm",
-            criticality=Severity.HIGH,
-            tags=["database", "internal", "pii-store"],
-            extra_data={"engine": "PostgreSQL 16", "encryption": "AES-256"},
-            last_seen=datetime.utcnow(),
-            is_active=True,
-        )
-        asset3 = Asset(
-            id="ast-dc-003",
-            name="Primary Domain Controller",
-            asset_type=AssetType.HOST,
-            value="192.168.1.5",
-            description="Active Directory domain controller and Kerberos KDC",
-            os="Windows Server",
-            os_version="Windows Server 2022",
-            criticality=Severity.CRITICAL,
-            tags=["ad", "identity", "tier-0", "kdc"],
-            extra_data={"domain": "SPAIDER.LOCAL", "forest_level": "2016"},
-            last_seen=datetime.utcnow(),
-            is_active=True,
-        )
-        asset4 = Asset(
-            id="ast-web-004",
-            name="Public Web Application Portal",
-            asset_type=AssetType.URL,
-            value="https://app.spaider-security.io",
-            description="Customer facing single-page portal and dashboard",
-            os="Linux",
-            os_version="Alpine 3.19",
-            criticality=Severity.HIGH,
-            tags=["frontend", "spa", "cloud", "customer-facing"],
-            extra_data={"runtime": "Node 20 / Nginx", "cdn": "Cloudflare"},
-            last_seen=datetime.utcnow(),
-            is_active=True,
-        )
-        db.add_all([asset1, asset2, asset3, asset4])
-        await db.flush()
-
-        # Services
-        srv1 = Service(id="srv-001", asset_id=asset1.id, port=80, protocol="tcp", name="http", product="nginx", version="1.24.0", state="open")
-        srv2 = Service(id="srv-002", asset_id=asset1.id, port=443, protocol="tcp", name="https", product="nginx", version="1.24.0", state="open", tls=True)
-        srv3 = Service(id="srv-003", asset_id=asset1.id, port=22, protocol="tcp", name="ssh", product="OpenSSH", version="8.9p1", state="open")
-        srv4 = Service(id="srv-004", asset_id=asset2.id, port=5432, protocol="tcp", name="postgresql", product="PostgreSQL", version="16.2", state="open")
-        srv5 = Service(id="srv-005", asset_id=asset3.id, port=88, protocol="tcp", name="kerberos", product="Microsoft Kerberos", version="10.0", state="open")
-        srv6 = Service(id="srv-006", asset_id=asset3.id, port=445, protocol="tcp", name="microsoft-ds", product="SMBv3", version="10.0", state="open")
-        db.add_all([srv1, srv2, srv3, srv4, srv5, srv6])
-        await db.flush()
-
-        # 4. Scan Jobs
-        job1 = ScanJob(
-            id="job-nmap-001",
-            name="Perimeter Infrastructure Comprehensive Port Scan",
-            mode=ScanMode.RED,
-            status=ScanStatus.COMPLETED,
-            plugin="nmap",
-            targets=["192.168.1.1", "192.168.1.5", "192.168.1.10"],
-            options={"timing": "-T4", "scripts": "default,vuln", "service_detection": True},
-            progress=100,
-            started_at=datetime.utcnow() - timedelta(hours=4),
-            completed_at=datetime.utcnow() - timedelta(hours=3, minutes=45),
-            scope_id=scope_infra.id,
-            created_by=admin_user.id,
-        )
-        job2 = ScanJob(
-            id="job-nuclei-002",
-            name="Automated Web Application Vulnerability Assessment",
-            mode=ScanMode.RED,
-            status=ScanStatus.COMPLETED,
-            plugin="nuclei",
-            targets=["http://juice-shop:3000"],
-            target_id=target_js.id,
-            options={"severity": "critical,high,medium", "templates": "cves,vulnerabilities"},
-            progress=100,
-            started_at=datetime.utcnow() - timedelta(hours=2),
-            completed_at=datetime.utcnow() - timedelta(hours=1, minutes=40),
-            scope_id=scope_js.id,
-            created_by=admin_user.id,
-        )
-        job3 = ScanJob(
-            id="job-wazuh-003",
-            name="Continuous Host-Based Detection & Threat Hunting",
-            mode=ScanMode.BLUE,
-            status=ScanStatus.RUNNING,
-            plugin="wazuh",
-            targets=["192.168.1.0/24"],
-            options={"rule_level": 8, "time_range": "24h"},
-            progress=74,
-            started_at=datetime.utcnow() - timedelta(minutes=45),
-            scope_id=scope_infra.id,
-            created_by=analyst_user.id,
-        )
-        job4 = ScanJob(
-            id="job-purple-004",
-            name="Purple Team ATT&CK Matrix Coverage Validation",
-            mode=ScanMode.PURPLE,
-            status=ScanStatus.COMPLETED,
-            plugin="purple",
-            targets=["192.168.1.5"],
-            options={"matrix": "enterprise", "tactic": "credential-access"},
-            progress=100,
-            started_at=datetime.utcnow() - timedelta(hours=6),
-            completed_at=datetime.utcnow() - timedelta(hours=5),
-            scope_id=scope_infra.id,
-            created_by=admin_user.id,
-        )
-        db.add_all([job1, job2, job3, job4])
-        await db.flush()
-
-        # 5. Findings
-        f1 = Finding(
-            id="fnd-001",
-            title="Remote Code Execution via Apache Struts OGNL (CVE-2023-50164)",
-            description="Critical path traversal and parameter manipulation flaw leading to remote code execution.",
-            severity=Severity.CRITICAL,
-            plugin="nuclei",
-            template_id="cve-2023-50164",
-            cve_ids=["CVE-2023-50164"],
-            cvss_score=9.8,
-            cvss_vector="CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H",
-            cwe_ids=["CWE-22", "CWE-94"],
-            mitre_techniques=["T1190"],
-            affected_url="https://app.spaider-security.io/upload",
-            evidence="Successfully confirmed parameter manipulation without authentication.",
-            remediation="Upgrade Apache Struts to 2.5.33 or 6.3.0.2 immediately.",
-            tags=["rce", "cve", "critical"],
-            asset_id=asset4.id,
-            scan_job_id=job2.id,
-            is_verified=True,
-            ai_analysis={"risk_summary": "Extremely critical. Immediate internet-facing compromise vector.", "confidence": 0.98},
-        )
-        f2 = Finding(
-            id="fnd-002",
-            title="SQL Injection in Authentication Backend Endpoint",
-            description="Unsanitized user input in authentication API allows arbitrary database query injection.",
-            severity=Severity.HIGH,
-            plugin="caido",
-            template_id="sqli-blind-boolean",
-            cve_ids=[],
-            cvss_score=8.6,
-            cwe_ids=["CWE-89"],
-            mitre_techniques=["T1190"],
-            affected_url="https://app.spaider-security.io/api/v1/auth/verify",
-            evidence="Response latency varied proportionally with injected SLEEP(5) payloads.",
-            remediation="Use parameterized queries and ORM object binding strictly.",
-            tags=["sqli", "owasp-top-10"],
-            asset_id=asset4.id,
-            scan_job_id=job2.id,
-            is_verified=True,
-            ai_analysis={"risk_summary": "High risk of total database compromise and data exfiltration.", "confidence": 0.95},
-        )
-        f3 = Finding(
-            id="fnd-003",
-            title="Exposed Docker Daemon REST API on TCP 2375",
-            description="Unauthenticated Docker API endpoint exposed to internal network allows container breakout.",
-            severity=Severity.HIGH,
-            plugin="nmap",
-            template_id="docker-api-exposed",
-            cve_ids=[],
-            cvss_score=8.1,
-            cwe_ids=["CWE-306"],
-            mitre_techniques=["T1610"],
-            affected_url="http://192.168.1.1:2375/version",
-            evidence="Docker Engine v24.0.7 responded with full system information without TLS certificates.",
-            remediation="Enable TLS mutual authentication or bind Docker socket exclusively to local unix socket.",
-            tags=["docker", "misconfiguration", "privilege-escalation"],
-            asset_id=asset1.id,
-            scan_job_id=job1.id,
-            is_verified=True,
-        )
-        f4 = Finding(
-            id="fnd-004",
-            title="Weak SSH Cipher Suites Enabled (CBC Modes)",
-            description="SSH daemon supports legacy CBC ciphers vulnerable to plaintext recovery attacks.",
-            severity=Severity.LOW,
-            plugin="nmap",
-            template_id="ssh2-enum-algos",
-            cve_ids=["CVE-2008-5161"],
-            cvss_score=3.7,
-            cwe_ids=["CWE-327"],
-            mitre_techniques=[],
-            affected_url="ssh://192.168.1.1:22",
-            evidence="Offered ciphers included: 3des-cbc, aes128-cbc, aes256-cbc",
-            remediation="Update sshd_config to use modern CTR or ChaCha20 cipher suites.",
-            tags=["ssh", "cryptography"],
-            asset_id=asset1.id,
-            scan_job_id=job1.id,
-            is_verified=False,
-        )
-        db.add_all([f1, f2, f3, f4])
-        await db.flush()
-
-        # 6. SIEM Alerts
-        a1 = Alert(
-            id="alt-001",
-            title="Multiple Failed SSH Logins (Potential Brute Force)",
-            description="Host received 142 failed SSH authentication attempts from external IP 203.0.113.88 in 3 minutes.",
-            severity=Severity.HIGH,
-            status=AlertStatus.INVESTIGATING,
-            source="wazuh",
-            source_ip="203.0.113.88",
-            destination_ip="192.168.1.1",
-            destination_port=22,
-            protocol="tcp",
-            event_type="authentication_failure",
-            mitre_techniques=["T1110.001"],
-            count=142,
-            asset_id=asset1.id,
-            assigned_to=analyst_user.id,
-        )
-        a2 = Alert(
-            id="alt-002",
-            title="Suspicious Base64 Encoded PowerShell Process Spawned",
-            description="powershell.exe executed with -EncodedCommand parameter spawning from Office document process.",
-            severity=Severity.CRITICAL,
-            status=AlertStatus.OPEN,
-            source="wazuh",
-            source_ip="192.168.1.105",
-            destination_ip="198.51.100.42",
-            destination_port=443,
-            protocol="tcp",
-            event_type="process_creation",
-            mitre_techniques=["T1059.001", "T1027"],
-            count=3,
-            is_purple_validated=True,
-            detection_gap=False,
-        )
-        a3 = Alert(
-            id="alt-003",
-            title="DNS Exfiltration Pattern / High Entropy Subdomain Queries",
-            description="Continuous sequence of high-entropy DNS TXT and A record queries indicative of iodine/dnscat2.",
-            severity=Severity.HIGH,
-            status=AlertStatus.OPEN,
-            source="zeek",
-            source_ip="192.168.1.5",
-            destination_ip="8.8.8.8",
-            destination_port=53,
-            protocol="udp",
-            event_type="dns_anomaly",
-            mitre_techniques=["T1071.004", "T1048"],
-            count=89,
-            asset_id=asset3.id,
-        )
-        a4 = Alert(
-            id="alt-004",
-            title="Detection Gap: Kerberoasting Attack (T1558.003) Unflagged",
-            description="Purple team test performed Kerberoast ticket request SPN queries without SIEM alert triggering.",
-            severity=Severity.MEDIUM,
-            status=AlertStatus.OPEN,
-            source="purple",
-            source_ip="192.168.1.105",
-            destination_ip="192.168.1.5",
-            destination_port=88,
-            protocol="tcp",
-            event_type="purple_validation_failure",
-            mitre_techniques=["T1558.003"],
-            count=1,
-            is_purple_validated=True,
-            detection_gap=True,
-            asset_id=asset3.id,
-        )
-        db.add_all([a1, a2, a3, a4])
-        await db.flush()
+        # Operational inventory, scans, findings, and alerts are not seeded.
+        # These dashboards must reflect records produced by actual integrations.
 
         # 7. MITRE Techniques
         t1 = MitreTechnique(
@@ -476,80 +220,7 @@ async def seed_database(force: bool = False):
         db.add_all([t1, t2, t3])
         await db.flush()
 
-        # 8. IOCs
-        ioc1 = IOC(
-            id="ioc-001",
-            type="ip",
-            value="198.51.100.42",
-            threat_type="c2_server",
-            confidence=0.95,
-            source="ThreatIntel Feeds / SPAIDER Honeypot",
-            tags=["cobalt-strike", "c2", "active-threat"],
-            first_seen=datetime.utcnow() - timedelta(days=7),
-            last_seen=datetime.utcnow(),
-            is_active=True,
-        )
-        ioc2 = IOC(
-            id="ioc-002",
-            type="domain",
-            value="update-windows-telemetry.biz",
-            threat_type="c2_domain",
-            confidence=0.90,
-            source="Zeek Network Detection",
-            tags=["dns-beacon", "adversary-infra"],
-            first_seen=datetime.utcnow() - timedelta(days=3),
-            last_seen=datetime.utcnow(),
-            is_active=True,
-        )
-        ioc3 = IOC(
-            id="ioc-003",
-            type="hash",
-            value="e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-            threat_type="stager_payload",
-            confidence=0.99,
-            source="YARA Malware Engine",
-            tags=["trojan", "dropper"],
-            first_seen=datetime.utcnow() - timedelta(days=1),
-            last_seen=datetime.utcnow(),
-            is_active=True,
-        )
-        db.add_all([ioc1, ioc2, ioc3])
-        await db.flush()
-
-        # 9. Reports
-        rep1 = Report(
-            id="rep-exec-001",
-            title="Q3 Comprehensive Cyber Threat Landscape & Exposure Summary",
-            report_type="executive",
-            content={
-                "executive_summary": "Overall enterprise risk profile is currently evaluated at ELEVATED due to 1 critical perimeter vulnerability and ongoing credential access attempts.",
-                "total_assets_scanned": 4,
-                "critical_findings": 1,
-                "high_findings": 2,
-                "mean_time_to_detect": "14 minutes",
-                "recommended_actions": [
-                    "Immediate patching of Struts CVE-2023-50164 on public web portal.",
-                    "Close or secure Docker daemon port 2375 on perimeter gateway.",
-                    "Deploy updated detection rule for T1558.003 Kerberoasting on Active Directory."
-                ],
-            },
-            created_by=admin_user.id,
-        )
-        rep2 = Report(
-            id="rep-tech-002",
-            title="Technical Vulnerability Assessment & Proof of Concepts",
-            report_type="technical",
-            content={
-                "scope_evaluated": "Primary Infrastructure & Web Applications",
-                "vulnerabilities": [
-                    {"id": "CVE-2023-50164", "severity": "CRITICAL", "target": "https://app.spaider-security.io"},
-                    {"id": "SQLi-AUTH-01", "severity": "HIGH", "target": "https://app.spaider-security.io/api/v1/auth/verify"},
-                    {"id": "DOCKER-2375", "severity": "HIGH", "target": "192.168.1.1:2375"}
-                ],
-            },
-            created_by=admin_user.id,
-        )
-        db.add_all([rep1, rep2])
+        # No fabricated threat indicators or pre-generated reports are inserted.
 
         await db.commit()
         logger.info("Database seeding successfully completed!")

@@ -46,11 +46,18 @@ cp .env.example .env
 docker-compose up -d
 
 # Frontend dev (without Docker)
-cd frontend && npm install && npm run dev
+cd frontend && npm install --allow-git=all
+npm install-scripts approve esbuild
+npm rebuild esbuild
+npm run dev
 
-# Backend dev (without Docker)
-cd backend && pip install -r requirements.txt
-uvicorn app.main:app --reload
+# Backend dev (without Docker; Python 3.12 is required)
+cd backend
+python3.12 -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+python -m pip install -r requirements.txt
+uvicorn app.main:app --reload --port 8000
 ```
 
 ## Services
@@ -64,6 +71,34 @@ uvicorn app.main:app --reload
 | PostgreSQL | localhost:5432 | Database |
 | Redis | localhost:6379 | Cache + broker |
 | OpenSearch | http://localhost:9200 | Log search |
+
+
+## Real web-scan workflow
+
+The Web Security page submits scan jobs to the FastAPI backend; it does not create sample findings when the API is offline. The current Nuclei path:
+
+1. Requires a login and rejects targets that do not match an active, unexpired, documented scope.
+2. Starts a Nuclei scan using selected categories, rate limits, request timeouts, and non-interactive-safe defaults. Intrusive, fuzzing, and denial-of-service templates are excluded by default.
+3. Saves the scan job, task status, raw result path, and scanner-returned findings in the database. The dashboard and reports read these records.
+4. Shows a clear setup or scanner error if Nuclei or its templates are unavailable. Zero findings means the scanner returned no matching findings; it is not a guarantee that a target is secure.
+
+The backend container installs Nmap and a pinned Nuclei release. When running the backend directly on your host, install those executables and make sure Nuclei templates can be downloaded.
+
+## Local account and authorization setup
+
+- On a **fresh local development database**, the seeded administrator defaults to username `admin` and password `admin123` unless `SPAIDER_ADMIN_PASSWORD` is set. Change this before exposing the service. The default is for isolated local development only.
+- Set a unique `SECRET_KEY` and `SPAIDER_ADMIN_PASSWORD` before production use. Production startup intentionally refuses the example secret or a missing admin password.
+- Self-registration is disabled by default. Platform API routes require an authenticated JWT.
+- A scan target needs an active scope containing an authorization-document reference, authorizing person, validity dates, and active-testing permission. Only an administrator can create or activate a scope. SPAiDER stores the reference and the operator's attestation; it does not independently verify that an underlying permission document is authentic.
+- The repository seeds controlled local OWASP lab target definitions. Their existence is **not** permission to test a third-party target. Use only a lab you control or a program scope you have permission to test.
+
+## Integration boundaries
+
+- Burp/Caido endpoints can ingest and persist findings, but the external proxy and its extension must be configured separately.
+- AI analysis requires a working `OPENAI_API_KEY` or `ANTHROPIC_API_KEY`; without one, the UI reports that AI analysis is unavailable rather than generating a fake result.
+- Malware analysis is static-only in this workflow. Files are not executed in a sandbox.
+- Purple Team currently correlates historical alert records with ATT&CK techniques. It does not run attack simulations and does not call absence of an alert a verified detection gap.
+- Plugin status reflects detected executables, Python modules, and configuration. An external integration or setup-only suggestion is not represented as an executed scan.
 
 ## Technology Stack
 
@@ -144,7 +179,8 @@ This automatically installs prerequisites, creates a virtual environment, and sy
 ```bash
 # Network & Port Scanning
 spaider scan 192.168.1.1
-spaider scan example.com --type full -p 80,443,8080
+# Scan only a host covered by an active, documented authorization scope.
+spaider scan <authorized-host> --type quick -p 80,443
 
 # AI Security Analyst (Offensive, Defensive, Purple)
 spaider ai "Analyze suspicious outbound DNS traffic on port 53" --mode PURPLE

@@ -1,6 +1,6 @@
 import axios from 'axios'
 
-const BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
+const BASE_URL = import.meta.env.VITE_API_URL || '' // Use same-origin /api routing by default
 
 export const api = axios.create({
   baseURL: `${BASE_URL}/api/v1`,
@@ -13,6 +13,20 @@ api.interceptors.request.use((config) => {
   if (token) config.headers.Authorization = `Bearer ${token}`
   return config
 })
+
+api.interceptors.response.use(
+  response => response,
+  error => {
+    const status = error?.response?.status
+    const requestUrl = String(error?.config?.url || '')
+    if (status === 401 && !requestUrl.includes('/auth/login')) {
+      localStorage.removeItem('spaider_token')
+      localStorage.removeItem('spaider_user')
+      if (window.location.hash !== '#/login') window.location.hash = '#/login'
+    }
+    return Promise.reject(error)
+  },
+)
 
 // ── API functions ─────────────────────────────────────────────────────────
 

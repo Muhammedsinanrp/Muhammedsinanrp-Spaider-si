@@ -38,26 +38,70 @@ def is_ip_in_network(ip_str: str, net_str: str) -> bool:
 
 
 def matches_scope_pattern(target_host: str, pattern: str) -> bool:
-    """Check if host matches scope rule (domain, wildcard, IP, CIDR)."""
-    pattern_clean = pattern.strip()
-    pattern_host = extract_host(pattern_clean)
+    """Match a target URL/host against a scope entry.
 
-    # Exact host match
-    if target_host.lower() == pattern_host.lower():
+    URL-shaped scope entries constrain scheme and explicit port as well as host.
+    Plain domain and CIDR entries retain their host/subdomain/network semantics.
+    A URL path in the scope acts as a path prefix.
+    """
+    target_raw = str(target_host).strip()
+    pattern_clean = str(pattern).strip()
+    if not target_raw or not pattern_clean:
+        return False
+
+    target_has_scheme = "://" in target_raw
+    pattern_has_scheme = "://" in pattern_clean
+    try:
+        target_parsed = urllib.parse.urlsplit(target_raw if target_has_scheme else f"//{target_raw}")
+        pattern_parsed = urllib.parse.urlsplit(pattern_clean if pattern_has_scheme else f"//{pattern_clean}")
+        target_port = target_parsed.port
+        pattern_port = pattern_parsed.port
+    except ValueError:
+        return False
+
+    target_name = (target_parsed.hostname or extract_host(target_raw)).lower().rstrip(".")
+    pattern_name = (pattern_parsed.hostname or extract_host(pattern_clean)).lower().rstrip(".")
+
+    # An URL scope represents one origin. Do not allow changing http<->https
+    # or scanning a different port because the hostname happens to match.
+    if pattern_has_scheme:
+        # URL/origin scopes authorize HTTP(S) testing only, not a bare-host port
+        # scan. Network scanners need a separate domain, IP, or CIDR scope.
+        if not target_has_scheme:
+            return False
+        if target_parsed.scheme.lower() != pattern_parsed.scheme.lower():
+            return False
+        default_port = 443 if target_parsed.scheme.lower() == "https" else 80
+        scope_default_port = 443 if pattern_parsed.scheme.lower() == "https" else 80
+        actual_port = target_port or default_port
+        allowed_port = pattern_port or scope_default_port
+        if actual_port != allowed_port:
+            return False
+    elif pattern_port is not None and target_port != pattern_port:
+        return False
+
+    # If the scope entry includes a non-root path, limit the target to it.
+    scope_path = pattern_parsed.path.rstrip("/")
+    if pattern_has_scheme and scope_path:
+        target_path = (target_parsed.path or "/").rstrip("/")
+        if target_path != scope_path and not target_path.startswith(scope_path + "/"):
+            return False
+
+    # Exact host match.
+    if target_name == pattern_name:
         return True
 
-    # Wildcard domain match (*.example.com)
-    if pattern_host.startswith("*."):
-        suffix = pattern_host[1:].lower()
-        if target_host.lower().endswith(suffix):
-            return True
+    # Wildcard domains (*.example.com).
+    if pattern_name.startswith("*."):
+        suffix = pattern_name[1:]
+        return target_name.endswith(suffix) and target_name != pattern_name[2:]
 
-    # Subdomain match if pattern is a root domain
-    if target_host.lower().endswith("." + pattern_host.lower()):
+    # A bare root domain permits its subdomains.
+    if target_name.endswith("." + pattern_name):
         return True
 
-    # IP / CIDR check
-    if is_ip_in_network(target_host, pattern_clean):
+    # IP address and CIDR scopes.
+    if is_ip_in_network(target_name, pattern_clean):
         return True
 
     return False
@@ -76,42 +120,41 @@ class ScopeValidator:
 
     @staticmethod
     def validate_target(scope: Scope, target_input: str) -> Tuple[bool, str]:
-        """Synchronously validate target against a single Scope model."""
+        """Validate a target against one documented, active authorization scope."""
         target_host = extract_host(target_input)
         now = datetime.utcnow()
 
         if scope.authorization_status != "AUTHORIZED":
             return False, f"Scope '{scope.name}' is not AUTHORIZED (status: {scope.authorization_status})"
-
+        if scope.valid_from and scope.valid_from > now:
+            return False, f"Scope '{scope.name}' is not valid until {scope.valid_from}"
         if scope.valid_until and scope.valid_until < now:
             return False, f"Scope '{scope.name}' has expired on {scope.valid_until}"
-
         if scope.expires_at and scope.expires_at < now:
             return False, f"Scope '{scope.name}' has expired"
 
-        # Check excluded
-        for excl in scope.excluded_targets or []:
-            if matches_scope_pattern(target_host, str(excl)):
+        # Exclusions take precedence over positive scope entries.
+        for excluded in scope.excluded_targets or []:
+            if matches_scope_pattern(target_input, str(excluded)):
                 return False, f"Target '{target_input}' is explicitly excluded in scope '{scope.name}'"
 
-        # Check allowed targets
-        matched = False
-        for allowed in scope.targets or []:
-            if matches_scope_pattern(target_host, str(allowed)):
-                matched = True
-                break
-
-        if not matched and scope.value:
-            if matches_scope_pattern(target_host, scope.value):
-                matched = True
-
-        if not matched:
+        matches = any(
+            matches_scope_pattern(target_input, str(allowed))
+            for allowed in scope.targets or []
+        )
+        if not matches and scope.value:
+            matches = matches_scope_pattern(target_input, str(scope.value))
+        if not matches:
             return False, f"Target '{target_input}' (host: {target_host}) not found in authorized targets of scope '{scope.name}'"
 
+        if not str(scope.authorized_by or "").strip():
+            return False, f"Scope '{scope.name}' is missing the authorizing person."
+        if not str(scope.authorization_document or "").strip():
+            return False, f"Scope '{scope.name}' is missing an authorization document reference."
         if not scope.active_testing:
             return False, f"Active testing is disabled for scope '{scope.name}'"
 
-        return True, f"Target '{target_input}' is authorized"
+        return True, f"Target '{target_input}' is authorized under scope '{scope.name}'"
 
 
 async def validate_target_scope(
@@ -120,68 +163,82 @@ async def validate_target_scope(
     scope_id: Optional[str] = None,
 ) -> Tuple[bool, str, Optional[Scope]]:
     """
-    Validate whether a target is permitted for active scanning.
-    Returns: (is_authorized, reason, matching_scope)
+    Validate an active scan target against an explicit authorization scope.
+
+    Continue evaluating candidate scopes when one matches but is expired,
+    disabled, excluded, or missing authorization evidence; an older unusable
+    record must not shadow a newer valid scope for the same authorized target.
     """
     target_host = extract_host(target_input)
-
-    # Fetch active scopes
     stmt = select(Scope).where(Scope.authorization_status == "AUTHORIZED")
     if scope_id:
         stmt = stmt.where(Scope.id == scope_id)
 
     result = await db.execute(stmt)
     scopes = result.scalars().all()
-
     now = datetime.utcnow()
-    matching_scope: Optional[Scope] = None
+    missing_document_scope: Optional[Scope] = None
+    inactive_scope: Optional[Scope] = None
+    future_scope: Optional[Scope] = None
 
     for scope in scopes:
-        # Check validity window
+        if scope.valid_from and scope.valid_from > now:
+            future_scope = future_scope or scope
+            continue
         if scope.valid_until and scope.valid_until < now:
             continue
         if scope.expires_at and scope.expires_at < now:
             continue
 
-        # Check excluded targets first
-        is_excluded = False
-        for excl in scope.excluded_targets or []:
-            if matches_scope_pattern(target_host, str(excl)):
-                is_excluded = True
-                break
-        if is_excluded:
+        # Exclusions apply within the scope that declares them.
+        if any(matches_scope_pattern(target_input, str(excl)) for excl in scope.excluded_targets or []):
             continue
 
-        # Check scope targets list
-        for allowed in scope.targets or []:
-            if matches_scope_pattern(target_host, str(allowed)):
-                matching_scope = scope
-                break
+        allowed = any(matches_scope_pattern(target_input, str(pattern)) for pattern in scope.targets or [])
+        if not allowed and scope.value:
+            allowed = matches_scope_pattern(target_input, scope.value)
+        if not allowed:
+            continue
 
-        # Check scope single value field
-        if not matching_scope and scope.value:
-            if matches_scope_pattern(target_host, scope.value):
-                matching_scope = scope
+        if not str(scope.authorized_by or "").strip() or not str(scope.authorization_document or "").strip():
+            missing_document_scope = missing_document_scope or scope
+            continue
+        if not scope.active_testing:
+            inactive_scope = inactive_scope or scope
+            continue
 
-        if matching_scope:
-            break
-
-    if not matching_scope:
         return (
-            False,
-            f"Target '{target_input}' (host: {target_host}) is NOT in any AUTHORIZED testing scope. Scanning rejected.",
-            None,
+            True,
+            f"Target '{target_input}' authorized under scope '{scope.name}' "
+            f"(Authorized by: {scope.authorized_by}).",
+            scope,
         )
 
-    if not matching_scope.active_testing:
+    if inactive_scope:
         return (
             False,
-            f"Scope '{matching_scope.name}' has active_testing=False. Active scanning is disabled for this scope.",
-            matching_scope,
+            f"Matching scope '{inactive_scope.name}' has active_testing=False. Active scanning is disabled.",
+            inactive_scope,
+        )
+    if missing_document_scope:
+        if not str(missing_document_scope.authorized_by or "").strip():
+            detail = "no authorizing person is recorded"
+        else:
+            detail = "no authorization document reference is recorded"
+        return (
+            False,
+            f"Matching scope '{missing_document_scope.name}' has {detail}. Scanning rejected.",
+            missing_document_scope,
+        )
+    if future_scope:
+        return (
+            False,
+            f"A matching scope is not valid until {future_scope.valid_from}. Scanning rejected.",
+            future_scope,
         )
 
     return (
-        True,
-        f"Target '{target_input}' authorized under scope '{matching_scope.name}' (Authorized by: {matching_scope.authorized_by or 'SecOps'}).",
-        matching_scope,
+        False,
+        f"Target '{target_input}' (host: {target_host}) is NOT in any active, unexpired AUTHORIZED testing scope. Scanning rejected.",
+        None,
     )

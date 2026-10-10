@@ -177,8 +177,7 @@ services:
     depends_on:
       - backend
     environment:
-      VITE_API_URL: ${VITE_API_URL:-http://localhost:8000}
-      VITE_WS_URL: ${VITE_WS_URL:-ws://localhost:8000}
+      VITE_PROXY_TARGET: ${VITE_PROXY_TARGET:-http://backend:8000}
 
   nginx:
     image: nginx:1.25-alpine

@@ -13,6 +13,9 @@ from app.models.models import Finding, Severity
 
 router = APIRouter()
 
+LEGACY_DEMO_FINDING_IDS = ("fnd-001", "fnd-002", "fnd-003", "fnd-004")
+
+
 
 class FindingOut(BaseModel):
     id: str
@@ -22,8 +25,22 @@ class FindingOut(BaseModel):
     plugin: Optional[str]
     cve_ids: List[str]
     cvss_score: Optional[float]
+    cvss_vector: Optional[str] = None
     mitre_techniques: List[str]
+    cwe_ids: List[str] = []
     remediation: Optional[str]
+    asset_value: Optional[str] = None
+    endpoint: Optional[str] = None
+    affected_url: Optional[str] = None
+    confidence: Optional[float] = None
+    evidence: Optional[str] = None
+    request_raw: Optional[str] = None
+    response_raw: Optional[str] = None
+    proof_of_concept: Optional[str] = None
+    references: List[str] = []
+    tags: List[str] = []
+    status: Optional[str] = None
+    scan_job_id: Optional[str] = None
     is_verified: bool
     is_false_positive: bool
     created_at: datetime
@@ -38,7 +55,7 @@ async def list_findings(
     offset: int = 0,
     db: AsyncSession = Depends(get_db),
 ):
-    stmt = select(Finding).order_by(desc(Finding.created_at)).limit(limit).offset(offset)
+    stmt = select(Finding).where(Finding.id.notin_(LEGACY_DEMO_FINDING_IDS)).order_by(desc(Finding.created_at)).limit(limit).offset(offset)
     if severity:
         stmt = stmt.where(Finding.severity == severity)
     if asset_id:
@@ -49,9 +66,26 @@ async def list_findings(
         FindingOut(
             id=str(f.id), title=f.title, description=f.description,
             severity=f.severity.value, plugin=f.plugin, cve_ids=f.cve_ids or [],
-            cvss_score=f.cvss_score, mitre_techniques=f.mitre_techniques or [],
-            remediation=f.remediation, is_verified=f.is_verified,
-            is_false_positive=f.is_false_positive, created_at=f.created_at,
+            cvss_score=f.cvss_score if f.cvss_score is not None else f.cvss,
+            cvss_vector=f.cvss_vector,
+            mitre_techniques=f.mitre_techniques or [],
+            cwe_ids=f.cwe_ids or [],
+            remediation=f.remediation,
+            asset_value=f.asset_value,
+            endpoint=f.endpoint,
+            affected_url=f.affected_url,
+            confidence=f.confidence,
+            evidence=f.evidence,
+            request_raw=f.request_raw,
+            response_raw=f.response_raw,
+            proof_of_concept=f.proof_of_concept or f.curl_poc,
+            references=f.references or [],
+            tags=f.tags or [],
+            status=f.status,
+            scan_job_id=f.scan_job_id,
+            is_verified=f.is_verified,
+            is_false_positive=f.is_false_positive,
+            created_at=f.created_at,
         ) for f in findings
     ]
 
@@ -62,7 +96,7 @@ async def finding_stats(db: AsyncSession = Depends(get_db)):
     counts = {}
     for sev in Severity:
         result = await db.execute(
-            select(func.count(Finding.id)).where(Finding.severity == sev)
+            select(func.count(Finding.id)).where(Finding.severity == sev, Finding.id.notin_(LEGACY_DEMO_FINDING_IDS))
         )
         counts[sev.value] = result.scalar()
     return counts
@@ -70,7 +104,7 @@ async def finding_stats(db: AsyncSession = Depends(get_db)):
 
 @router.get("/{finding_id}")
 async def get_finding(finding_id: str, db: AsyncSession = Depends(get_db)):
-    result = await db.execute(select(Finding).where(Finding.id == uuid.UUID(finding_id)))
+    result = await db.execute(select(Finding).where(Finding.id == str(finding_id), Finding.id.notin_(LEGACY_DEMO_FINDING_IDS)))
     f = result.scalar_one_or_none()
     if not f:
         raise HTTPException(status_code=404, detail="Finding not found")

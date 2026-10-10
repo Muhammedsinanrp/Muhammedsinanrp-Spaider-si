@@ -2,14 +2,6 @@ import { useState } from 'react'
 import { useQuery, useMutation } from '@tanstack/react-query'
 import { alertApi } from '../api/client'
 
-const MOCK_ALERTS = [
-  { id:'1', title:'Lateral movement via SMB — T1021.002', severity:'CRITICAL', status:'OPEN', source:'Zeek', source_ip:'192.168.1.30', destination_ip:'192.168.1.20', event_type:'Lateral Movement', mitre_techniques:['T1021.002'], is_purple_validated:false, detection_gap:false, created_at:'2026-10-01T05:12:00Z' },
-  { id:'2', title:'Repeated SSH brute-force from 45.33.32.156', severity:'HIGH', status:'INVESTIGATING', source:'Wazuh', source_ip:'45.33.32.156', destination_ip:'192.168.1.10', event_type:'Credential Access', mitre_techniques:['T1110'], is_purple_validated:true, detection_gap:false, created_at:'2026-10-01T04:44:00Z' },
-  { id:'3', title:'Outbound beacon to known C2 — 104.21.91.14', severity:'CRITICAL', status:'OPEN', source:'Suricata', source_ip:'192.168.1.30', destination_ip:'104.21.91.14', event_type:'Command & Control', mitre_techniques:['T1071.001'], is_purple_validated:false, detection_gap:true, created_at:'2026-10-01T03:30:00Z' },
-  { id:'4', title:'Suspicious DNS exfiltration pattern', severity:'MEDIUM', status:'OPEN', source:'Zeek', source_ip:'192.168.1.20', destination_ip:'8.8.8.8', event_type:'Exfiltration', mitre_techniques:['T1048'], is_purple_validated:false, detection_gap:false, created_at:'2026-10-01T02:15:00Z' },
-  { id:'5', title:'New admin user created outside business hours', severity:'HIGH', status:'RESOLVED', source:'Wazuh', source_ip:'192.168.1.30', destination_ip:'192.168.1.1', event_type:'Persistence', mitre_techniques:['T1136'], is_purple_validated:true, detection_gap:false, created_at:'2026-09-30T23:00:00Z' },
-]
-
 const STATUS_OPTS = ['OPEN','INVESTIGATING','RESOLVED','FALSE_POSITIVE']
 const statusColors: Record<string,string> = {
   OPEN:'var(--color-red)', INVESTIGATING:'var(--color-medium)',
@@ -18,9 +10,10 @@ const statusColors: Record<string,string> = {
 
 export default function Alerts() {
   const [selected, setSelected] = useState<any>(null)
-  const { data: alerts = MOCK_ALERTS } = useQuery({
-    queryKey:['alerts'], queryFn:()=>alertApi.list(), retry:false, placeholderData:MOCK_ALERTS,
+  const { data: alertData, isLoading, isError, error } = useQuery({
+    queryKey:['alerts'], queryFn:()=>alertApi.list(), retry:false, refetchInterval:15000,
   })
+  const alerts: any[] = Array.isArray(alertData) ? alertData : []
 
   const timeAgo = (iso: string) => {
     const diff = Math.floor((Date.now()-new Date(iso).getTime())/1000)
@@ -34,7 +27,7 @@ export default function Alerts() {
       <div className="page-header">
         <div>
           <h1 className="page-title gradient-text-cyan">🛡️ Security Alerts</h1>
-          <p className="page-subtitle">SIEM-correlated detections from Wazuh, Zeek & Suricata</p>
+          <p className="page-subtitle">Stored security alerts from configured integrations; no demo alert records are shown.</p>
         </div>
         <div className="flex gap-2">
           <span className="badge badge-critical">● {(alerts as any[]).filter((a:any)=>a.status==='OPEN').length} Open</span>
@@ -48,7 +41,19 @@ export default function Alerts() {
             <span className="card-title">Alert Feed ({(alerts as any[]).length})</span>
           </div>
           <div style={{ display:'flex', flexDirection:'column', gap:'var(--space-2)' }}>
-            {(alerts as any[]).map((a:any) => (
+            {isLoading && <div style={{ padding:24, color:'var(--color-text-muted)' }}>Loading stored alert records…</div>}
+            {isError && <div role="alert" style={{ padding:24, color:'var(--color-high)' }}>
+              Could not load alert data from the backend. No sample alerts are substituted.
+              <div style={{ fontSize:'0.75rem', marginTop:6 }}>{String((error as any)?.message || '')}</div>
+            </div>}
+            {!isLoading && !isError && alerts.length === 0 && (
+              <div style={{ padding:32, textAlign:'center', color:'var(--color-text-muted)' }}>
+                <div style={{ fontSize:'2rem', marginBottom:8 }}>◈</div>
+                <strong>No alerts recorded</strong>
+                <div style={{ fontSize:'0.8rem', marginTop:6 }}>Connect Wazuh, Zeek, Suricata or another alert source to populate this feed.</div>
+              </div>
+            )}
+            {alerts.map((a:any) => (
               <div key={a.id}
                 onClick={() => setSelected(selected?.id===a.id ? null : a)}
                 style={{

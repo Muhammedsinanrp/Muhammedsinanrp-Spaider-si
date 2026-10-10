@@ -1,6 +1,5 @@
-import { useState } from 'react'
-import { useMutation, useQuery } from '@tanstack/react-query'
-import { api } from '../api/client'
+import { useEffect, useState } from 'react'
+import { webApi } from '../api/client'
 import toast from 'react-hot-toast'
 
 // ── Vulnerability Categories ──────────────────────────────
@@ -35,23 +34,71 @@ const SEV_BG: Record<string, string> = {
   INFO:     'rgba(33,150,243,0.1)',
 }
 
-// ── Demo findings shown immediately without backend ───────
-const DEMO_FINDINGS = [
-  { id:'f1', template_id:'CVE-2021-41773', title:'Apache Path Traversal (CVE-2021-41773)', severity:'CRITICAL', url:'/index.php', cve_ids:['CVE-2021-41773'], cvss_score:9.8, tags:['cve','apache'], curl_command:"curl -s --path-as-is 'https://target.com/.%2e/.%2e/etc/passwd'", references:['https://nvd.nist.gov/vuln/detail/CVE-2021-41773'], description:'Path normalization flaw allows reading arbitrary files outside document root.' },
-  { id:'f2', template_id:'cors-misconfig', title:'CORS Wildcard — Credentials Allowed', severity:'HIGH', url:'/api/', cve_ids:[], cvss_score:7.5, tags:['cors','misconfiguration'], curl_command:"curl -H 'Origin: https://evil.com' -I 'https://target.com/api/'", references:['https://portswigger.net/web-security/cors'], description:'Access-Control-Allow-Origin reflects attacker origin with credentials enabled.' },
-  { id:'f3', template_id:'exposed-env', title:'Exposed .env File Containing Secrets', severity:'HIGH', url:'/.env', cve_ids:[], cvss_score:7.5, tags:['exposure','secrets'], curl_command:"curl 'https://target.com/.env'", references:['https://owasp.org'], description:'Laravel/Django .env file publicly accessible — DB creds and API keys exposed.' },
-  { id:'f4', template_id:'graphql-introspection', title:'GraphQL Introspection Enabled in Production', severity:'MEDIUM', url:'/graphql', cve_ids:[], cvss_score:5.3, tags:['graphql','api'], curl_command:'curl -X POST -H "Content-Type: application/json" -d \'{"query":"{__schema{types{name}}}"}\' https://target.com/graphql', references:['https://owasp.org/Top10/A05_2021-Security_Misconfiguration/'], description:'Full schema enumeration possible via introspection — exposes all types and mutations.' },
-  { id:'f5', template_id:'jwt-alg-none', title:'JWT Algorithm Confusion — alg:none Accepted', severity:'HIGH', url:'/api/auth', cve_ids:[], cvss_score:8.1, tags:['jwt','auth'], curl_command:'', references:['https://portswigger.net/web-security/jwt'], description:'Server accepts JWT tokens with algorithm set to none, allowing signature bypass.' },
-  { id:'f6', template_id:'missing-headers', title:'Missing Critical Security Headers', severity:'MEDIUM', url:'/', cve_ids:[], cvss_score:4.3, tags:['headers','misconfig'], curl_command:"curl -I 'https://target.com/'", references:['https://owasp.org/www-project-secure-headers/'], description:'CSP, X-Frame-Options, X-Content-Type-Options missing — enables clickjacking and MIME sniffing.' },
-]
-
 export default function WebSecurity() {
-  const [targets, setTargets]           = useState('')
-  const [selected, setSelected]         = useState<string[]>([])
-  const [findings, setFindings]         = useState<any[]>([])
-  const [scanning, setScanning]         = useState(false)
+  const [targets, setTargets] = useState('')
+  const [selected, setSelected] = useState<string[]>(['cves', 'misconfig', 'exposures'])
+  const [findings, setFindings] = useState<any[]>([])
+  const [scanning, setScanning] = useState(false)
   const [detailFinding, setDetailFinding] = useState<any>(null)
-  const [proxyMode, setProxyMode]       = useState(false)
+  const [proxyMode, setProxyMode] = useState(false)
+  const [proxyUrl, setProxyUrl] = useState('http://127.0.0.1:8080')
+  const [taskId, setTaskId] = useState<string | null>(null)
+  const [scanStatus, setScanStatus] = useState('IDLE')
+  const [scanError, setScanError] = useState<string | null>(null)
+  const [scanMeta, setScanMeta] = useState<any>(null)
+
+  // Poll the API for real scanner state. No simulated progress or sample results.
+  useEffect(() => {
+    if (!taskId) return
+    let stopped = false
+    let timer: ReturnType<typeof setTimeout> | undefined
+
+    const poll = async () => {
+      try {
+        const status = await webApi.scanStatus(taskId)
+        if (stopped) return
+        const state = String(status.status || 'PENDING').toUpperCase()
+        const result = status.result
+        setScanStatus(state)
+
+        const terminal = ['SUCCESS', 'COMPLETED', 'FAILURE', 'FAILED', 'REVOKED', 'CANCELLED'].includes(state)
+        if (result?.error || terminal) {
+          const failure = result?.error || (['FAILURE', 'FAILED', 'REVOKED', 'CANCELLED'].includes(state)
+            ? 'The scanner job did not complete successfully.'
+            : null)
+          setScanning(false)
+          setTaskId(null)
+          setScanMeta(result || null)
+          setFindings(Array.isArray(result?.findings) ? result.findings : [])
+          if (failure) {
+            setScanError(String(failure))
+            toast.error(String(failure))
+          } else {
+            setScanError(null)
+            toast.success(`Real scan complete — ${Array.isArray(result?.findings) ? result.findings.length : 0} finding(s)`)
+          }
+          return
+        }
+      } catch (err: any) {
+        if (stopped) return
+        const message = err?.response?.data?.detail || err?.message || 'Unable to read scan status from the API.'
+        setScanning(false)
+        setTaskId(null)
+        setScanStatus('ERROR')
+        setScanError(String(message))
+        toast.error(String(message))
+        return
+      }
+
+      if (!stopped) timer = setTimeout(poll, 2000)
+    }
+
+    void poll()
+    return () => {
+      stopped = true
+      if (timer) clearTimeout(timer)
+    }
+  }, [taskId])
 
   // Toggle category selection
   const toggleCat = (id: string) =>
@@ -60,7 +107,7 @@ export default function WebSecurity() {
   const selectAll   = () => setSelected(VULN_CATEGORIES.map(c => c.id))
   const selectNone  = () => setSelected([])
 
-  // Launch scan
+  // Start an authorized scan. The API rejects targets outside active scope.
   const handleScan = async () => {
     const urls = targets.split('\n').map(t => t.trim()).filter(Boolean)
     if (!urls.length) { toast.error('Add at least one target URL'); return }
@@ -68,27 +115,47 @@ export default function WebSecurity() {
 
     setScanning(true)
     setFindings([])
+    setDetailFinding(null)
+    setScanError(null)
+    setScanMeta(null)
+    setScanStatus('SUBMITTING')
 
     try {
-      const resp = await api.post('/web/scan', {
+      const response = await webApi.scan({
         targets: urls,
         categories: selected,
+        rate_limit: 10,
+        timeout: 10,
+        proxy: proxyMode && proxyUrl.trim() ? proxyUrl.trim() : undefined,
       })
-      setFindings(resp.data.findings || DEMO_FINDINGS)
-      toast.success(`Scan complete — ${resp.data.total_findings ?? DEMO_FINDINGS.length} findings`)
-    } catch {
-      // Backend not running — show demo results
-      await new Promise(r => setTimeout(r, 2000))
-      setFindings(DEMO_FINDINGS.filter(f =>
-        selected.some(cat => VULN_CATEGORIES.find(c => c.id === cat)?.label.toLowerCase().includes(f.tags?.[0]?.toLowerCase() ?? '') ?? true)
-      ).length > 0
-        ? DEMO_FINDINGS
-        : DEMO_FINDINGS
-      )
-      toast.success('Demo scan complete — 6 findings (connect backend for real results)')
-    } finally {
+      if (!response?.task_id) throw new Error('The API did not return a scan task ID.')
+      setScanStatus(String(response.status || 'QUEUED').toUpperCase())
+      setTaskId(String(response.task_id))
+      toast.success('Authorized scan queued. Waiting for actual scanner results.')
+    } catch (err: any) {
+      const message = err?.response?.data?.detail || err?.message || 'Could not queue scan.'
       setScanning(false)
+      setTaskId(null)
+      setScanStatus('REJECTED')
+      setScanError(String(message))
+      toast.error(String(message))
     }
+  }
+
+  const exportFindings = () => {
+    const blob = new Blob([JSON.stringify({
+      product: 'SPAiDER',
+      exported_at: new Date().toISOString(),
+      scan_status: scanStatus,
+      scan: scanMeta,
+      findings,
+    }, null, 2)], { type: 'application/json' })
+    const url = URL.createObjectURL(blob)
+    const anchor = document.createElement('a')
+    anchor.href = url
+    anchor.download = `spaider-web-findings-${new Date().toISOString().replace(/[:.]/g, '-')}.json`
+    anchor.click()
+    URL.revokeObjectURL(url)
   }
 
   const sevCount = (sev: string) => findings.filter(f => f.severity === sev).length
@@ -99,7 +166,7 @@ export default function WebSecurity() {
       <div className="page-header">
         <div>
           <h1 className="page-title gradient-text-red">🕷️ Web Security Testing</h1>
-          <p className="page-subtitle">Nuclei · Burp · Caido — XSS · SQLi · SSRF · IDOR · JWT · CORS · GraphQL · 8000+ checks</p>
+          <p className="page-subtitle">Nuclei template scanning · evidence-backed findings · optional Burp/Caido proxy and finding import</p>
         </div>
         <div className="flex gap-2">
           <button
@@ -118,14 +185,26 @@ export default function WebSecurity() {
           borderRadius: 'var(--radius-lg)', padding: 'var(--space-5)', marginBottom: 'var(--space-5)',
         }}>
           <div style={{ fontWeight: 700, marginBottom: 8 }}>🔥 Burp / Caido Proxy Integration</div>
+          <div className="form-group" style={{ marginBottom: 'var(--space-4)' }}>
+            <label className="form-label">Proxy URL (reachable from the backend host/container)</label>
+            <input
+              className="input input-mono"
+              value={proxyUrl}
+              onChange={e => setProxyUrl(e.target.value)}
+              placeholder="http://127.0.0.1:8080"
+            />
+            <div style={{ fontSize: '0.72rem', color: 'var(--color-text-muted)', marginTop: 5 }}>
+              The URL is passed to Nuclei only when proxy mode is enabled. If the backend runs in Docker, use a proxy address reachable from that container.
+            </div>
+          </div>
           <div className="grid-3" style={{ gap: 'var(--space-4)', fontSize: '0.875rem' }}>
             {[
               ['1. Start Burp Suite', 'Proxy → Options → HTTP Proxy → 127.0.0.1:8080'],
               ['2. Configure Browser', 'Set proxy to 127.0.0.1:8080 and install Burp CA cert'],
-              ['3. Browse Target',    'Traffic flows through Burp — SPAIDER plugin syncs findings'],
+              ['3. Browse Target',    'Capture traffic in the configured proxy'],
               ['4. Run Active Scan',  'Burp Dashboard → New Scan → configure scope → launch'],
               ['5. Purple Validate',  'SPAIDER auto-correlates with Wazuh/Zeek detections'],
-              ['6. View in SPAIDER',  'Findings appear here automatically via the plugin bridge'],
+              ['6. View in SPAIDER',  'Imported findings are saved through the SPAIDER API'],
             ].map(([title, desc]) => (
               <div key={title} style={{ padding: 'var(--space-3)', background: 'rgba(255,255,255,0.03)', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)' }}>
                 <div style={{ fontWeight: 700, color: 'var(--color-high)', marginBottom: 4 }}>{title}</div>
@@ -151,7 +230,7 @@ export default function WebSecurity() {
               <textarea
                 className="input input-mono"
                 rows={4}
-                placeholder={'https://target.example.com\nhttps://api.example.com\nhttps://admin.example.com'}
+                placeholder={'http://localhost:3001\nhttps://your-authorized-host.example'}
                 value={targets}
                 onChange={e => setTargets(e.target.value)}
               />
@@ -181,7 +260,6 @@ export default function WebSecurity() {
                     background: selected.includes(cat.id) ? SEV_BG[cat.severity] : 'transparent',
                     cursor: 'pointer', transition: 'all 0.15s',
                   }}
-                  onClick={() => toggleCat(cat.id)}
                 >
                   <input
                     type="checkbox"
@@ -266,7 +344,7 @@ export default function WebSecurity() {
                 {findings.length > 0 ? `🔎 ${findings.length} Findings` : '🔎 Findings'}
               </span>
               {findings.length > 0 && (
-                <button className="btn btn-sm btn-ghost">Export</button>
+                <button className="btn btn-sm btn-ghost" onClick={exportFindings}>Export JSON</button>
               )}
             </div>
 
@@ -287,39 +365,56 @@ export default function WebSecurity() {
               <span>Only scan systems you are authorised to test. Ensure a valid scope and authorization document exists.</span>
             </div>
 
-            {findings.length === 0 && !scanning && (
-              <div style={{ textAlign: 'center', padding: 'var(--space-10)', color: 'var(--color-text-muted)' }}>
-                <div style={{ fontSize: '3rem', marginBottom: 'var(--space-4)' }}>🕷️</div>
-                <div style={{ fontWeight: 600, marginBottom: 8 }}>Configure a target and categories</div>
-                <div style={{ fontSize: '0.875rem' }}>Select vulnerability types on the left and launch a scan</div>
+
+            {scanning && (
+              <div style={{ padding: 'var(--space-4)' }}>
+                <div className="terminal">
+                  <div className="terminal-line info">[*] Scan task: {taskId || 'submitting'}</div>
+                  <div className="terminal-line info">[*] Status: {scanStatus}</div>
+                  <div className="terminal-line info">[*] Waiting for the backend scanner; results are not simulated.</div>
+                </div>
               </div>
             )}
 
-            {scanning && (
-              <div style={{ padding: 'var(--space-6)' }}>
-                <div className="terminal">
-                  {[
-                    { cls: 'warn',    txt: '[!] ⚠️ Only scan systems you are authorised to test. Ensure a valid scope and authorization document exists.' },
-                    { cls: 'info',    txt: '[*] Initialising SPAIDER Web Security Engine...' },
-                    { cls: 'info',    txt: '[*] Loading Nuclei templates...' },
-                    { cls: 'success', txt: '[+] Templates loaded: CVEs, XSS, SQLi, SSRF, CORS, JWT, API...' },
-                    { cls: 'info',    txt: `[*] Starting scan against ${targets.split('\n').filter(Boolean).length} target(s)` },
-                    { cls: 'warn',    txt: '[~] Testing injection vectors...' },
-                    { cls: 'warn',    txt: '[~] Checking authentication endpoints...' },
-                    { cls: 'warn',    txt: '[~] Analysing API surface...' },
-                  ].map((l, i) => (
-                    <div key={i} className={`terminal-line ${l.cls}`} style={{ animationDelay: `${i * 0.3}s` }}>
-                      {l.txt}
-                    </div>
-                  ))}
+            {scanError && !scanning && (
+              <div role="alert" style={{
+                margin: 'var(--space-3) var(--space-4)',
+                padding: 'var(--space-3)',
+                border: '1px solid rgba(255,59,92,0.35)',
+                borderRadius: 'var(--radius-md)',
+                background: 'rgba(255,59,92,0.07)',
+                color: 'var(--color-red)',
+                fontSize: '0.8rem',
+                whiteSpace: 'pre-wrap',
+              }}>
+                <strong>Scan failed — no demo findings shown.</strong>
+                <div style={{ marginTop: 6 }}>{scanError}</div>
+              </div>
+            )}
+
+            {scanMeta && !scanError && (
+              <div style={{ padding: '0 var(--space-4) var(--space-2)', color: 'var(--color-text-muted)', fontSize: '0.72rem' }}>
+                Scanner result: {scanMeta.demo === false ? 'real tool output' : 'status unknown'}
+                {scanMeta.persisted_findings !== undefined ? ` · ${scanMeta.persisted_findings} newly persisted` : ''}
+              </div>
+            )}
+
+            {findings.length === 0 && !scanning && !scanError && (
+              <div style={{ textAlign: 'center', padding: 'var(--space-10)', color: 'var(--color-text-muted)' }}>
+                <div style={{ fontSize: '3rem', marginBottom: 'var(--space-4)' }}>🕷️</div>
+                <div style={{ fontWeight: 600, marginBottom: 8 }}>
+                  {scanStatus === 'SUCCESS' || scanStatus === 'COMPLETED'
+                    ? 'Scan completed — no matching findings were returned'
+                    : 'Configure a target and launch a scan'}
                 </div>
+                <div style={{ fontSize: '0.875rem' }}>Only findings returned by the real scanner appear here.</div>
               </div>
             )}
 
             <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
               {findings.map(f => (
                 <div
-                  key={f.id}
+                  key={f.id || `${f.template_id || f.title}-${f.url}`}
                   onClick={() => setDetailFinding(detailFinding?.id === f.id ? null : f)}
                   style={{
                     padding: 'var(--space-3) var(--space-4)',

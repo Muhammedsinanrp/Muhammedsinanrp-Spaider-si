@@ -1,6 +1,6 @@
 """API v1 router — aggregates all endpoint routers."""
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 
 from app.api.v1.endpoints import (
     auth,
@@ -23,21 +23,22 @@ from app.api.v1.endpoints import (
 )
 
 api_router = APIRouter()
+PROTECTED = [Depends(auth.get_current_user)]
 
 api_router.include_router(auth.router, prefix="/auth", tags=["Authentication"])
-api_router.include_router(targets.router, prefix="/targets", tags=["Targets"])
-api_router.include_router(assets.router, prefix="/assets", tags=["Assets"])
-api_router.include_router(scans.router, prefix="/scans", tags=["Scans"])
-api_router.include_router(findings.router, prefix="/findings", tags=["Findings"])
-api_router.include_router(alerts.router, prefix="/alerts", tags=["Alerts"])
-api_router.include_router(malware.router, prefix="/malware", tags=["Malware Analysis"])
-api_router.include_router(network.router, prefix="/network", tags=["Network Discovery"])
-api_router.include_router(siem.router, prefix="/siem", tags=["SIEM"])
-api_router.include_router(ai_analyst.router, prefix="/ai", tags=["AI Analyst"])
-api_router.include_router(reports.router, prefix="/reports", tags=["Reports"])
-api_router.include_router(plugins.router, prefix="/plugins", tags=["Plugins"])
-api_router.include_router(purple.router, prefix="/purple", tags=["Purple Team"])
-api_router.include_router(web_security.router, prefix="/web", tags=["Web Security"])
-api_router.include_router(osint.router, prefix="/osint", tags=["OSINT"])
-api_router.include_router(tools.router, prefix="/tools", tags=["Tools"])
+api_router.include_router(targets.router, prefix="/targets", tags=["Targets"], dependencies=PROTECTED)
+api_router.include_router(assets.router, prefix="/assets", tags=["Assets"], dependencies=PROTECTED)
+api_router.include_router(scans.router, prefix="/scans", tags=["Scans"], dependencies=PROTECTED)
+api_router.include_router(findings.router, prefix="/findings", tags=["Findings"], dependencies=PROTECTED)
+api_router.include_router(alerts.router, prefix="/alerts", tags=["Alerts"], dependencies=PROTECTED)
+api_router.include_router(malware.router, prefix="/malware", tags=["Malware Analysis"], dependencies=PROTECTED)
+api_router.include_router(network.router, prefix="/network", tags=["Network Discovery"], dependencies=PROTECTED)
+api_router.include_router(siem.router, prefix="/siem", tags=["SIEM"], dependencies=PROTECTED)
+api_router.include_router(ai_analyst.router, prefix="/ai", tags=["AI Analyst"], dependencies=PROTECTED)
+api_router.include_router(reports.router, prefix="/reports", tags=["Reports"], dependencies=PROTECTED)
+api_router.include_router(plugins.router, prefix="/plugins", tags=["Plugins"], dependencies=PROTECTED)
+api_router.include_router(purple.router, prefix="/purple", tags=["Purple Team"], dependencies=PROTECTED)
+api_router.include_router(web_security.router, prefix="/web", tags=["Web Security"], dependencies=PROTECTED)
+api_router.include_router(osint.router, prefix="/osint", tags=["OSINT"], dependencies=PROTECTED)
+api_router.include_router(tools.router, prefix="/tools", tags=["Tools"], dependencies=PROTECTED)
 api_router.include_router(websocket.router, prefix="/ws", tags=["WebSocket"])

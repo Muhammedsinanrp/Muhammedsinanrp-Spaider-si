@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr, Field
 from jose import JWTError, jwt
 from passlib.context import CryptContext
 
@@ -22,9 +22,9 @@ oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login")
 
 
 class UserCreate(BaseModel):
-    username: str
+    username: str = Field(min_length=3, max_length=64)
     email: EmailStr
-    password: str
+    password: str = Field(min_length=12, max_length=128)
     full_name: Optional[str] = None
 
 
@@ -74,7 +74,7 @@ async def get_current_user(token: str = Depends(oauth2_scheme), db: AsyncSession
             raise credentials_exc
     except JWTError:
         raise credentials_exc
-    result = await db.execute(select(User).where(User.id == uuid.UUID(user_id)))
+    result = await db.execute(select(User).where(User.id == str(user_id)))
     user = result.scalar_one_or_none()
     if user is None or not user.is_active:
         raise credentials_exc
@@ -83,11 +83,16 @@ async def get_current_user(token: str = Depends(oauth2_scheme), db: AsyncSession
 
 @router.post("/register", response_model=UserResponse, status_code=201)
 async def register(payload: UserCreate, db: AsyncSession = Depends(get_db)):
+    if not settings.allow_self_registration:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Self-registration is disabled. Ask an administrator to provision an account.",
+        )
     result = await db.execute(select(User).where(User.username == payload.username))
     if result.scalar_one_or_none():
         raise HTTPException(status_code=400, detail="Username already taken")
     user = User(
-        id=uuid.uuid4(),
+        id=str(uuid.uuid4()),
         username=payload.username,
         email=payload.email,
         hashed_password=hash_password(payload.password),

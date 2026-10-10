@@ -22,7 +22,23 @@ logger = structlog.get_logger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan: startup and shutdown events."""
-    logger.info("SPAIDER starting up...", version="1.0.0")
+    is_production = settings.environment.lower() in {"production", "prod"}
+    if is_production and not settings.spaider_admin_password.strip():
+        raise RuntimeError(
+            "SPAIDER_ADMIN_PASSWORD must be set before starting SPAIDER in production."
+        )
+    if is_production and (
+        len(settings.secret_key) < 32
+        or settings.secret_key in {
+            "changeme",
+            "spaider-super-secret-key-change-in-production-immediately",
+        }
+    ):
+        raise RuntimeError(
+            "Set a unique SECRET_KEY of at least 32 characters before starting SPAIDER in production."
+        )
+
+    logger.info("SPAIDER starting up...", version="1.0.0", environment=settings.environment)
     # Create all tables (checkfirst skips existing tables/indexes safely)
     async with engine.begin() as conn:
         await conn.run_sync(lambda c: Base.metadata.create_all(c, checkfirst=True))

