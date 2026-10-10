@@ -9,7 +9,8 @@ from sqlalchemy import select, desc, func
 from pydantic import BaseModel, Field
 
 from app.core.database import get_db
-from app.models.models import Target, Scope, Asset, ScanJob, Finding, ScanStatus, Severity
+from app.models.models import Target, Scope, Asset, ScanJob, Finding, ScanStatus, Severity, User
+from app.api.v1.endpoints.auth import get_current_user
 
 router = APIRouter()
 
@@ -196,8 +197,10 @@ async def list_scopes(target_id: str, db: AsyncSession = Depends(get_db)):
 
 
 @router.post("/{target_id}/scopes", response_model=ScopeOut, status_code=201)
-async def add_scope(target_id: str, payload: ScopeCreate, db: AsyncSession = Depends(get_db)):
-    """Record scope only after the operator explicitly attests to authorization."""
+async def add_scope(target_id: str, payload: ScopeCreate, db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user)):
+    """Record scope only after an administrator attests to authorization."""
+    if current_user.role != "admin" and not current_user.is_superuser:
+        raise HTTPException(status_code=403, detail="Only an administrator can create or activate an authorization scope.")
     target_result = await db.execute(select(Target).where(Target.id == target_id))
     target = target_result.scalar_one_or_none()
     if target is None:
