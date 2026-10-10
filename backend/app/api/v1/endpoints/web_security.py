@@ -3,16 +3,19 @@
 import socket
 import threading
 import uuid
+import json
+from datetime import datetime
 from typing import List, Optional
 from urllib.parse import urlsplit
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.database import get_db
-from app.models.models import ScanEvent, ScanJob, ScanMode, ScanStatus
+from app.models.models import Finding, ScanEvent, ScanJob, ScanMode, ScanStatus
 from app.services.scope_validator import validate_target_scope
 from app.workers.celery_app import celery_app
 
@@ -117,7 +120,7 @@ async def launch_web_scan(payload: WebScanRequest, db: AsyncSession = Depends(ge
     normalized_targets = list(dict.fromkeys(_validate_url(t) for t in payload.targets))
     from app.plugins.nuclei.plugin import WEB_VULN_CATEGORIES
 
-    categories = payload.categories or list(WEB_VULN_CATEGORIES.keys())
+    categories = payload.categories if payload.categories is not None else ["cves", "misconfig", "exposures"]
     if not categories:
         raise HTTPException(status_code=400, detail="Select at least one scan category.")
     unknown = sorted(set(categories) - set(WEB_VULN_CATEGORIES))
@@ -196,7 +199,7 @@ async def launch_web_scan(payload: WebScanRequest, db: AsyncSession = Depends(ge
             queue_message = f"Redis dispatch failed; using local runner ({type(exc).__name__})."
 
     job.status = ScanStatus.RUNNING
-    job.started_at = __import__("datetime").datetime.utcnow()
+    job.started_at = datetime.utcnow()
     await db.commit()
     thread = threading.Thread(
         target=_run_local_web_scan,
@@ -220,8 +223,8 @@ async def get_categories():
 
 
 @router.get("/scan/{task_id}/status")
-async def scan_status(task_id: str):
-    """Poll live scanner state and its actual structured result."""
+async def scan_status(task_id: str, db: AsyncSession = Depends(get_db)):
+    """Poll task state, with database-backed recovery after process/queue restarts."""
     with _LOCAL_WEB_SCANS_LOCK:
         local = _LOCAL_WEB_SCANS.get(task_id)
     if local is not None:
@@ -232,14 +235,71 @@ async def scan_status(task_id: str):
             "authorization_warning": AUTH_WARNING,
         }
 
+    # Celery result backends can expire results; the durable scan job remains.
+    job_result = await db.execute(select(ScanJob).where(ScanJob.id == task_id))
+    job = job_result.scalar_one_or_none()
+    if job is None:
+        job_result = await db.execute(select(ScanJob).where(ScanJob.celery_task_id == task_id))
+        job = job_result.scalar_one_or_none()
+
     task = celery_app.AsyncResult(task_id)
     result = task.result if task.ready() else None
     if task.failed():
         result = {"error": str(task.result), "findings": []}
+
+    job_status = str(job.status.value if job and hasattr(job.status, "value") else job.status) if job else ""
+    if job and (result is None or job_status in {"COMPLETED", "FAILED", "CANCELLED"}):
+        try:
+            summary = json.loads(job.raw_output or "{}")
+            if not isinstance(summary, dict):
+                summary = {}
+        except (TypeError, ValueError):
+            summary = {}
+
+        stored_result = await db.execute(
+            select(Finding).where(Finding.scan_job_id == job.id).order_by(Finding.created_at.desc())
+        )
+        stored_findings = []
+        for finding in stored_result.scalars().all():
+            raw = finding.raw_data if isinstance(finding.raw_data, dict) else {}
+            stored_findings.append({
+                **raw,
+                "id": str(finding.id),
+                "template_id": finding.template_id or raw.get("template_id", ""),
+                "title": finding.title,
+                "description": finding.description or "",
+                "severity": finding.severity.value if hasattr(finding.severity, "value") else str(finding.severity),
+                "url": finding.affected_url or finding.endpoint or raw.get("url", ""),
+                "cve_ids": finding.cve_ids or [],
+                "cvss_score": finding.cvss_score if finding.cvss_score is not None else finding.cvss,
+                "tags": finding.tags or [],
+                "references": finding.references or [],
+                "curl_command": finding.curl_poc or raw.get("curl_command", ""),
+                "request": finding.request_raw or raw.get("request", ""),
+                "response": finding.response_raw or raw.get("response", ""),
+            })
+        if job_status in {"COMPLETED", "FAILED", "CANCELLED"}:
+            result = {
+                **summary,
+                "findings": stored_findings,
+                "total_findings": int(summary.get("total_findings", len(stored_findings))),
+                "demo": False,
+            }
+            if job_status == "FAILED":
+                result["error"] = job.error_msg or summary.get("error") or "Scan job failed."
+            return {
+                "task_id": task_id,
+                "status": "SUCCESS" if job_status == "COMPLETED" else job_status,
+                "result": result,
+                "scan_id": str(job.id),
+                "authorization_warning": AUTH_WARNING,
+            }
+
     return {
         "task_id": task_id,
-        "status": task.status,
+        "status": job_status if job and task.status == "PENDING" else task.status,
         "result": result,
+        "scan_id": str(job.id) if job else None,
         "authorization_warning": AUTH_WARNING,
     }
 
