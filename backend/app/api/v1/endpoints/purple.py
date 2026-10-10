@@ -112,7 +112,7 @@ async def validate_detection(payload: PurpleValidationRequest, db: AsyncSession 
 async def detection_gaps(db: AsyncSession = Depends(get_db)):
     """List only alerts explicitly marked as detection gaps by a real integration."""
     result = await db.execute(
-        select(Alert).where(Alert.detection_gap.is_(True)).order_by(Alert.created_at.desc()).limit(500)
+        select(Alert).where(Alert.detection_gap.is_(True), Alert.id.notin_(("alt-001", "alt-002", "alt-003", "alt-004"))).order_by(Alert.created_at.desc()).limit(500)
     )
     alerts = result.scalars().all()
     return [
