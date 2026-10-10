@@ -126,11 +126,20 @@ class ScopeValidator:
         if scope.authorization_status != "AUTHORIZED":
             return False, f"Scope '{scope.name}' is not AUTHORIZED (status: {scope.authorization_status})"
 
+        if scope.valid_from and scope.valid_from > now:
+            return False, f"Scope '{scope.name}' is not valid until {scope.valid_from}"
+
         if scope.valid_until and scope.valid_until < now:
             return False, f"Scope '{scope.name}' has expired on {scope.valid_until}"
 
         if scope.expires_at and scope.expires_at < now:
             return False, f"Scope '{scope.name}' has expired"
+
+        if not str(scope.authorized_by or "").strip():
+            return False, f"Scope '{scope.name}' is missing the authorizing person."
+
+        if not str(scope.authorization_document or "").strip():
+            return False, f"Scope '{scope.name}' is missing an authorization document reference."
 
         # Check excluded
         for excl in scope.excluded_targets or []:
@@ -180,7 +189,9 @@ async def validate_target_scope(
     matching_scope: Optional[Scope] = None
 
     for scope in scopes:
-        # Check validity window
+        # Check validity window before matching the target.
+        if scope.valid_from and scope.valid_from > now:
+            continue
         if scope.valid_until and scope.valid_until < now:
             continue
         if scope.expires_at and scope.expires_at < now:
@@ -215,6 +226,12 @@ async def validate_target_scope(
             f"Target '{target_input}' (host: {target_host}) is NOT in any AUTHORIZED testing scope. Scanning rejected.",
             None,
         )
+
+    if not str(matching_scope.authorized_by or "").strip():
+        return False, f"Scope '{matching_scope.name}' has no authorizing person recorded.", matching_scope
+
+    if not str(matching_scope.authorization_document or "").strip():
+        return False, f"Scope '{matching_scope.name}' has no authorization document reference. Scanning rejected.", matching_scope
 
     if not matching_scope.active_testing:
         return (
