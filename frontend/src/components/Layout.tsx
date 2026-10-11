@@ -34,11 +34,13 @@ const NAV_ITEMS = [
 export default function Layout() {
   const navigate = useNavigate()
   const location = useLocation()
-  const { theme, setTheme, setHoloViewerOpen } = useStore()
+  const { theme, setTheme, setHoloViewerOpen, currentUser, logout, setCurrentUser } = useStore()
 
   const [toolsOpen, setToolsOpen] = useState(false)
   const [themeDropdown, setThemeDropdown] = useState(false)
   const themeDropdownRef = useRef<HTMLDivElement>(null)
+  const [userDropdown, setUserDropdown] = useState(false)
+  const userDropdownRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', theme)
@@ -48,6 +50,9 @@ export default function Layout() {
     const handleOutsideClick = (e: MouseEvent) => {
       if (themeDropdownRef.current && !themeDropdownRef.current.contains(e.target as Node)) {
         setThemeDropdown(false)
+      }
+      if (userDropdownRef.current && !userDropdownRef.current.contains(e.target as Node)) {
+        setUserDropdown(false)
       }
     }
     document.addEventListener('mousedown', handleOutsideClick)
@@ -137,6 +142,51 @@ export default function Layout() {
               <div style={{ fontSize: '0.65rem', color: 'var(--color-text-muted)' }}>Nmap · Nuclei · Subfinder · httpx…</div>
             </div>
             <span style={{ fontSize: '0.8rem', color: 'var(--color-text-muted)' }}>›</span>
+          </button>
+        </div>
+
+        {/* User Card in Sidebar */}
+        <div style={{
+          padding: '10px 14px',
+          margin: '0 12px 10px',
+          borderRadius: 'var(--radius-md)',
+          background: 'rgba(255,255,255,0.03)',
+          border: '1px solid var(--color-border)',
+          display: 'flex',
+          alignItems: 'center',
+          gap: 10,
+        }}>
+          <div style={{
+            width: 30, height: 30, borderRadius: '50%',
+            background: currentUser?.role === 'admin'
+              ? 'linear-gradient(135deg, #00e5ff, #38bdf8)'
+              : 'linear-gradient(135deg, #a855f7, #ec4899)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            fontSize: '0.8rem', fontWeight: 800, color: '#05070f', flexShrink: 0,
+          }}>
+            {currentUser?.username ? currentUser.username.charAt(0).toUpperCase() : 'U'}
+          </div>
+          <div style={{ flex: 1, minWidth: 0, overflow: 'hidden' }}>
+            <div style={{ fontSize: '0.78rem', fontWeight: 700, color: '#f8fafc', whiteSpace: 'nowrap', textOverflow: 'ellipsis', overflow: 'hidden' }}>
+              {currentUser?.username || 'Guest'}
+            </div>
+            <div style={{ fontSize: '0.65rem', color: currentUser?.role === 'admin' ? 'var(--color-cyan)' : '#c084fc', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+              {currentUser?.role || 'Guest'} · Online
+            </div>
+          </div>
+          <button
+            onClick={() => navigate('/login')}
+            title="Switch User / Relogin"
+            style={{
+              background: 'transparent',
+              border: 'none',
+              color: 'var(--color-text-muted)',
+              cursor: 'pointer',
+              padding: 4,
+              fontSize: '0.85rem',
+            }}
+          >
+            🔄
           </button>
         </div>
 
@@ -254,12 +304,239 @@ export default function Layout() {
               ✓ AUTHORIZED SCOPE
             </div>
 
-            <div style={{
-              width: 32, height: 32, borderRadius: '50%',
-              background: 'linear-gradient(135deg, var(--color-cyan), var(--color-purple))',
-              display: 'flex', alignItems: 'center', justifyContent: 'center',
-              fontSize: '0.875rem', fontWeight: 700, color: '#000', cursor: 'pointer',
-            }}>A</div>
+            {/* User Profile Pill & Dropdown */}
+            <div ref={userDropdownRef} style={{ position: 'relative' }}>
+              {currentUser ? (
+                <button
+                  id="user-profile-menu-btn"
+                  onClick={() => setUserDropdown(!userDropdown)}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 8,
+                    background: 'rgba(15, 23, 42, 0.7)',
+                    border: '1px solid var(--color-border-accent)',
+                    borderRadius: '999px',
+                    padding: '4px 10px 4px 4px',
+                    cursor: 'pointer',
+                    color: '#fff',
+                    transition: 'all 0.2s ease',
+                  }}
+                  title="Account Settings & Clearance"
+                >
+                  <div style={{
+                    width: 28,
+                    height: 28,
+                    borderRadius: '50%',
+                    background: currentUser.role === 'admin'
+                      ? 'linear-gradient(135deg, #00e5ff, #38bdf8)'
+                      : 'linear-gradient(135deg, #a855f7, #ec4899)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    fontSize: '0.8rem',
+                    fontWeight: 800,
+                    color: '#05070f',
+                  }}>
+                    {currentUser.username ? currentUser.username.charAt(0).toUpperCase() : 'U'}
+                  </div>
+                  <div style={{ textAlign: 'left', lineHeight: 1.1 }}>
+                    <div style={{ fontSize: '0.75rem', fontWeight: 700, color: '#f1f5f9' }}>
+                      {currentUser.username}
+                    </div>
+                    <div style={{
+                      fontSize: '0.62rem',
+                      fontWeight: 800,
+                      color: currentUser.role === 'admin' ? '#00e5ff' : '#c084fc',
+                      textTransform: 'uppercase',
+                      letterSpacing: '0.06em',
+                    }}>
+                      {currentUser.role}
+                    </div>
+                  </div>
+                  <span style={{ fontSize: '0.65rem', opacity: 0.6, marginLeft: 2 }}>▾</span>
+                </button>
+              ) : (
+                <button
+                  id="login-redirect-btn"
+                  onClick={() => navigate('/login')}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 6,
+                    padding: '6px 14px',
+                    borderRadius: 'var(--radius-sm)',
+                    background: 'linear-gradient(135deg, rgba(0, 229, 255, 0.2), rgba(168, 85, 247, 0.2))',
+                    border: '1px solid #00e5ff',
+                    color: '#00e5ff',
+                    fontSize: '0.78rem',
+                    fontWeight: 700,
+                    cursor: 'pointer',
+                  }}
+                >
+                  🔑 Sign In
+                </button>
+              )}
+
+              {userDropdown && currentUser && (
+                <div
+                  className="animate-fade-in"
+                  style={{
+                    position: 'absolute',
+                    top: 'calc(100% + 8px)',
+                    right: 0,
+                    width: 260,
+                    background: 'var(--color-bg-elevated)',
+                    border: '1px solid var(--color-border-accent)',
+                    borderRadius: 'var(--radius-lg)',
+                    padding: '12px',
+                    boxShadow: '0 10px 35px rgba(0,0,0,0.7)',
+                    zIndex: 100,
+                  }}
+                >
+                  {/* User info header */}
+                  <div style={{ paddingBottom: 10, borderBottom: '1px solid var(--color-border)', marginBottom: 8 }}>
+                    <div style={{ fontSize: '0.85rem', fontWeight: 800, color: '#f8fafc' }}>
+                      {currentUser.full_name || currentUser.username}
+                    </div>
+                    <div style={{ fontSize: '0.72rem', color: 'var(--color-text-muted)', marginTop: 2 }}>
+                      {currentUser.email}
+                    </div>
+                    <div style={{
+                      display: 'inline-block',
+                      marginTop: 6,
+                      padding: '2px 8px',
+                      borderRadius: 4,
+                      fontSize: '0.65rem',
+                      fontWeight: 800,
+                      background: currentUser.role === 'admin' ? 'rgba(0, 229, 255, 0.15)' : 'rgba(168, 85, 247, 0.15)',
+                      color: currentUser.role === 'admin' ? '#00e5ff' : '#c084fc',
+                      border: `1px solid ${currentUser.role === 'admin' ? '#00e5ff' : '#a855f7'}`,
+                      letterSpacing: '0.06em',
+                      textTransform: 'uppercase',
+                    }}>
+                      Role: {currentUser.role} · Clearance Lvl 4
+                    </div>
+                  </div>
+
+                  {/* Switch Account Quick Options */}
+                  <div style={{ marginBottom: 8 }}>
+                    <div style={{ fontSize: '0.68rem', fontWeight: 800, color: 'var(--color-cyan)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 6 }}>
+                      Switch User
+                    </div>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                      <button
+                        onClick={() => {
+                          setCurrentUser({
+                            id: 'usr-admin-001',
+                            username: 'admin',
+                            email: 'admin@spaider.internal',
+                            full_name: 'Chief Information Security Officer',
+                            role: 'admin',
+                            is_active: true,
+                          })
+                          setUserDropdown(false)
+                        }}
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'space-between',
+                          padding: '6px 8px',
+                          borderRadius: 'var(--radius-sm)',
+                          border: 'none',
+                          background: currentUser.username === 'admin' ? 'rgba(0, 229, 255, 0.12)' : 'transparent',
+                          color: '#fff',
+                          cursor: 'pointer',
+                          fontSize: '0.75rem',
+                          textAlign: 'left',
+                        }}
+                      >
+                        <span>⚡ Admin (Full Ops)</span>
+                        {currentUser.username === 'admin' && <span style={{ color: '#00e5ff', fontSize: '0.7rem' }}>✓ Active</span>}
+                      </button>
+
+                      <button
+                        onClick={() => {
+                          setCurrentUser({
+                            id: 'usr-analyst-002',
+                            username: 'analyst',
+                            email: 'analyst@spaider.internal',
+                            full_name: 'Lead Security Researcher',
+                            role: 'analyst',
+                            is_active: true,
+                          })
+                          setUserDropdown(false)
+                        }}
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'space-between',
+                          padding: '6px 8px',
+                          borderRadius: 'var(--radius-sm)',
+                          border: 'none',
+                          background: currentUser.username === 'analyst' ? 'rgba(168, 85, 247, 0.12)' : 'transparent',
+                          color: '#fff',
+                          cursor: 'pointer',
+                          fontSize: '0.75rem',
+                          textAlign: 'left',
+                        }}
+                      >
+                        <span>🛡️ Analyst (Research)</span>
+                        {currentUser.username === 'analyst' && <span style={{ color: '#c084fc', fontSize: '0.7rem' }}>✓ Active</span>}
+                      </button>
+                    </div>
+                  </div>
+
+                  <div style={{ borderTop: '1px solid var(--color-border)', paddingTop: 8, display: 'flex', flexDirection: 'column', gap: 4 }}>
+                    <button
+                      onClick={() => {
+                        setUserDropdown(false)
+                        navigate('/login')
+                      }}
+                      style={{
+                        padding: '6px 8px',
+                        borderRadius: 'var(--radius-sm)',
+                        border: 'none',
+                        background: 'transparent',
+                        color: 'var(--color-cyan)',
+                        cursor: 'pointer',
+                        fontSize: '0.75rem',
+                        textAlign: 'left',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 6,
+                      }}
+                    >
+                      🔐 Go to Login Portal
+                    </button>
+
+                    <button
+                      id="logout-btn"
+                      onClick={() => {
+                        logout()
+                        setUserDropdown(false)
+                        navigate('/login')
+                      }}
+                      style={{
+                        padding: '6px 8px',
+                        borderRadius: 'var(--radius-sm)',
+                        border: 'none',
+                        background: 'rgba(239, 68, 68, 0.1)',
+                        color: '#f87171',
+                        cursor: 'pointer',
+                        fontSize: '0.75rem',
+                        textAlign: 'left',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 6,
+                      }}
+                    >
+                      🚪 Sign Out
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
           </div>
         </header>
 

@@ -13,11 +13,13 @@ import Plugins from './pages/Plugins'
 import Reports from './pages/Reports'
 import MitreAttack from './pages/MitreAttack'
 import WebSecurity from './pages/WebSecurity'
+import Login from './pages/Login'
 
 export default function App() {
   return (
     <HashRouter>
       <Routes>
+        <Route path="/login" element={<Login />} />
         <Route path="/" element={<Layout />}>
           <Route index element={<Navigate to="/dashboard" replace />} />
           <Route path="dashboard" element={<Dashboard />} />
