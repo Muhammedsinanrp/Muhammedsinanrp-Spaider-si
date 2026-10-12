@@ -36,7 +36,7 @@ def scan(
     """Run Nmap scan and return parsed results."""
     from app.core.config import settings
 
-    nmap_path = getattr(settings, "nmap_path", "nmap")
+    nmap_path = getattr(settings, "resolved_nmap_path", getattr(settings, "nmap_path", "nmap"))
     os.makedirs(results_dir, exist_ok=True)
     result_file = os.path.join(results_dir, f"nmap_{uuid.uuid4()}.xml")
 

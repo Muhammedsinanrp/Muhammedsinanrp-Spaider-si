@@ -44,14 +44,31 @@ BIN_PATH="/usr/local/bin/spaider"
 echo -e "${CYAN}[*] Step 1: Installing system dependencies...${NC}"
 if command -v apt-get >/dev/null 2>&1; then
     $SUDO apt-get update -y
-    $SUDO apt-get install -y python3 python3-pip python3-venv git curl nmap libmagic1
+    $SUDO apt-get install -y python3 python3-pip python3-venv git curl wget unzip nmap libmagic1
 elif command -v dnf >/dev/null 2>&1; then
-    $SUDO dnf install -y python3 python3-pip git curl nmap file-libs
+    $SUDO dnf install -y python3 python3-pip git curl wget unzip nmap file-libs
 elif command -v pacman >/dev/null 2>&1; then
-    $SUDO pacman -Sy --noconfirm python python-pip git curl nmap file
+    $SUDO pacman -Sy --noconfirm python python-pip git curl wget unzip nmap file
 else
-    echo -e "${YELLOW}[!] Warning: Unknown package manager. Please ensure python3, nmap, and curl are installed.${NC}"
+    echo -e "${YELLOW}[!] Warning: Unknown package manager. Please ensure python3, nmap, curl, and unzip are installed.${NC}"
 fi
+
+# Install Nuclei (Web Security & Vulnerability Scanner)
+if ! command -v nuclei >/dev/null 2>&1; then
+    echo -e "${CYAN}[*] Installing ProjectDiscovery Nuclei scanner...${NC}"
+    ARCH="amd64"
+    UNAME_M="$(uname -m)"
+    if [ "$UNAME_M" = "aarch64" ] || [ "$UNAME_M" = "arm64" ]; then
+        ARCH="arm64"
+    fi
+    curl -sSL "https://github.com/projectdiscovery/nuclei/releases/download/v3.3.7/nuclei_3.3.7_linux_${ARCH}.zip" -o /tmp/nuclei.zip
+    $SUDO unzip -qo /tmp/nuclei.zip -d /usr/local/bin/ nuclei
+    $SUDO chmod +x /usr/local/bin/nuclei
+    rm -f /tmp/nuclei.zip
+    echo -e "${GREEN}[✔] Nuclei installed successfully.${NC}"
+fi
+echo -e "${CYAN}[*] Updating Nuclei vulnerability templates...${NC}"
+nuclei -update-templates >/dev/null 2>&1 || true
 
 echo -e "${CYAN}[*] Step 2: Setting up Python virtual environment...${NC}"
 cd "$INSTALL_DIR"

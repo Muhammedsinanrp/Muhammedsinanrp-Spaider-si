@@ -35,22 +35,32 @@ SPAIDER
 └── 🔌 Plugin Marketplace     ← Extensible security engine SDK
 ```
 
-## Quick Start
+## Quick Start (All-in-One Command)
 
+### 🪟 Windows (One-Command Setup & Launch)
+```powershell
+# Automated One-Command Installation (Installs Nuclei, templates, venv & packages):
+.\install.bat
+
+# Build production bundle & validate backend:
+.\build.bat
+
+# Launch all services (Backend + Frontend) in one command:
+.\start.bat
+```
+
+### 🐧 Linux / macOS
 ```bash
-# Clone and configure
-cp .env.example .env
-# Edit .env with your API keys
+# Automated One-Command Installation:
+chmod +x install.sh && ./install.sh
 
-# Launch all services
-docker-compose up -d
+# Launch platform:
+spaider serve
+```
 
-# Frontend dev (without Docker)
-cd frontend && npm install && npm run dev
-
-# Backend dev (without Docker)
-cd backend && pip install -r requirements.txt
-uvicorn app.main:app --reload
+### 🐳 Docker (Full Stack)
+```bash
+docker-compose up -d --build
 ```
 
 ## Services

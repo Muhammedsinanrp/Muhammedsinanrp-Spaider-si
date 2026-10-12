@@ -376,11 +376,18 @@ def cmd_status(args):
     print_banner()
     import shutil
 
+    from app.core.config import settings
+    nuclei_bin = getattr(settings, "resolved_nuclei_path", shutil.which("nuclei") or "Not in PATH")
+    nuclei_installed = bool(shutil.which("nuclei") or os.path.isfile(str(nuclei_bin)))
+    nmap_bin = getattr(settings, "resolved_nmap_path", shutil.which("nmap") or "Not in PATH")
+    nmap_installed = bool(shutil.which("nmap") or os.path.isfile(str(nmap_bin)))
+
     checks = [
         ("Python Version", sys.version.split()[0], True),
-        ("Nmap Binary", shutil.which("nmap") or "Not in PATH", bool(shutil.which("nmap"))),
-        ("Docker", shutil.which("docker") or "Not in PATH", bool(shutil.which("docker"))),
-        ("Git", shutil.which("git") or "Not in PATH", bool(shutil.which("git"))),
+        ("Nuclei Scanner (Web/API)", nuclei_bin if nuclei_installed else "Missing / Not in PATH", nuclei_installed),
+        ("Nmap Binary (Network)", nmap_bin if nmap_installed else "Missing / Not in PATH", nmap_installed),
+        ("Docker Engine", shutil.which("docker") or "Not in PATH", bool(shutil.which("docker"))),
+        ("Git Client", shutil.which("git") or "Not in PATH", bool(shutil.which("git"))),
     ]
 
     try:

@@ -64,3 +64,11 @@ Thumbs.db
 .idea/
 *.swp
 *.swo
+
+# Downloaded Binaries & Tool Artifacts
+*.exe
+bin/*.exe
+bin/nuclei
+bin/LICENSE.md
+bin/README*.md
+

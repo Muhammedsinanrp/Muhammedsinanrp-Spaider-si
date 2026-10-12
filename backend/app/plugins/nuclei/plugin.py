@@ -117,21 +117,24 @@ WEB_VULN_CATEGORIES = {
 
 
 def scan_web(targets: List[str], categories: Optional[List[str]] = None,
-             output_dir: str = "/app/scan_results") -> Dict[str, Any]:
+             output_dir: Optional[str] = None, results_dir: Optional[str] = None) -> Dict[str, Any]:
     """
     Run Nuclei web security scan against targets.
 
     Args:
         targets: List of URLs to scan (e.g. ["https://example.com"])
         categories: List of category keys to scan (None = all)
-        output_dir: Directory to write JSON results
+        output_dir / results_dir: Directory to write JSON results
 
     Returns:
         dict with findings list and summary
     """
-    os.makedirs(output_dir, exist_ok=True)
+    from app.core.config import settings
+
+    target_dir = output_dir or results_dir or getattr(settings, "scan_results_dir", "./scan_results")
+    os.makedirs(target_dir, exist_ok=True)
     run_id = str(uuid.uuid4())[:8]
-    output_file = os.path.join(output_dir, f"nuclei_web_{run_id}.json")
+    output_file = os.path.join(target_dir, f"nuclei_web_{run_id}.json")
 
     # Select templates
     if categories:
@@ -143,8 +146,9 @@ def scan_web(targets: List[str], categories: Optional[List[str]] = None,
         # Default: all high-value web templates
         templates = ["cves", "vulnerabilities", "misconfiguration", "exposures", "takeovers"]
 
+    nuclei_cmd = getattr(settings, "resolved_nuclei_path", getattr(settings, "nuclei_path", "nuclei"))
     cmd = [
-        "nuclei",
+        nuclei_cmd,
         "-json-export", output_file,
         "-silent",
         "-severity", "critical,high,medium",
@@ -157,7 +161,7 @@ def scan_web(targets: List[str], categories: Optional[List[str]] = None,
     for target in targets:
         cmd.extend(["-u", target])
 
-    logger.info("Starting Nuclei web scan", targets=targets, templates=templates)
+    logger.info("Starting Nuclei web scan", targets=targets, templates=templates, binary=nuclei_cmd)
 
     try:
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=900)

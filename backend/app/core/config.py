@@ -63,6 +63,34 @@ class Settings(BaseSettings):
     require_scope_authorization: bool = True
     allow_destructive_tests: bool = False
 
+    @property
+    def resolved_nuclei_path(self) -> str:
+        import shutil, os
+        if self.nuclei_path != "nuclei" and (shutil.which(self.nuclei_path) or os.path.isfile(self.nuclei_path)):
+            return self.nuclei_path
+        in_path = shutil.which("nuclei")
+        if in_path:
+            return in_path
+        root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
+        for candidate in ["nuclei.exe", "nuclei"]:
+            p = os.path.join(root, "bin", candidate)
+            if os.path.isfile(p):
+                return p
+        return self.nuclei_path
+
+    @property
+    def resolved_nmap_path(self) -> str:
+        import shutil, os
+        if self.nmap_path != "nmap" and (shutil.which(self.nmap_path) or os.path.isfile(self.nmap_path)):
+            return self.nmap_path
+        in_path = shutil.which("nmap")
+        if in_path:
+            return in_path
+        for default_win in [r"C:\Program Files (x86)\Nmap\nmap.exe", r"C:\Program Files\Nmap\nmap.exe"]:
+            if os.path.isfile(default_win):
+                return default_win
+        return self.nmap_path
+
     model_config = {"env_file": ".env", "case_sensitive": False}
 
 

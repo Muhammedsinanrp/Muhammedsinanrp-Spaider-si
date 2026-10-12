@@ -165,7 +165,8 @@ def _execute_nmap_scan(targets: List[str], scan_type: str = "full",
     logger.info("Starting Nmap scan", targets=targets, scan_type=scan_type)
 
     # Build Nmap arguments
-    nmap_args = [settings.nmap_path]
+    nmap_bin = getattr(settings, "resolved_nmap_path", settings.nmap_path)
+    nmap_args = [nmap_bin]
 
     scan_profiles = {
         "quick": ["-T4", "-F", "-sV"],
@@ -357,7 +358,8 @@ def _execute_nuclei_scan(targets: List[str], templates: List[str] = None, scan_i
     result_file = os.path.join(settings.scan_results_dir, f"nuclei_{uuid.uuid4()}.json")
     os.makedirs(settings.scan_results_dir, exist_ok=True)
 
-    cmd = [settings.nuclei_path, "-json-export", result_file]
+    nuclei_bin = getattr(settings, "resolved_nuclei_path", settings.nuclei_path)
+    cmd = [nuclei_bin, "-json-export", result_file]
     for target in targets:
         cmd.extend(["-u", target])
 
