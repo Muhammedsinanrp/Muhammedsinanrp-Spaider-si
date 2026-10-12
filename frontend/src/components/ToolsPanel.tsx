@@ -468,17 +468,22 @@ export default function ToolsPanel({ open, onClose }: ToolsPanelProps) {
     try {
       const resp = await toolApi.run(tool.id, targets, fields)
       setToolResults(prev => ({ ...prev, [tool.id]: resp }))
+      if (!resp.success) {
+        const detail = resp.result?.error || 'The backend could not complete this tool run.'
+        toast.error(`${tool.name} failed: ${detail}`, { id: tool.id })
+        return
+      }
       const msg = resp.mock ? `${tool.name} completed (demo data)` : `${tool.name} completed in ${resp.elapsed_ms}ms`
       toast.success(msg, { id: tool.id })
     } catch (err: any) {
-      // Backend not running — show helpful mock
-      const mockResp = {
-        plugin: tool.id, success: true, elapsed_ms: 0, mock: true,
-        result: { status: 'Backend offline — start backend to get real results', demo: true },
-        report: `${tool.name} — backend not reachable\nStart the backend: cd backend && uvicorn app.main:app --reload --port 8001`,
+      const message = err?.response?.data?.detail || err?.message || 'Unable to reach the backend.'
+      const errorResp = {
+        plugin: tool.id, success: false, elapsed_ms: 0, mock: false,
+        result: { error: message },
+        report: `${tool.name} could not run. Confirm the backend is running and try again.`,
       }
-      setToolResults(prev => ({ ...prev, [tool.id]: mockResp }))
-      toast.success(`${tool.name} ran (demo mode)`, { id: tool.id })
+      setToolResults(prev => ({ ...prev, [tool.id]: errorResp }))
+      toast.error(`${tool.name} failed: ${message}`, { id: tool.id })
     } finally {
       setRunningTools(prev => { const s = new Set(prev); s.delete(tool.id); return s })
     }

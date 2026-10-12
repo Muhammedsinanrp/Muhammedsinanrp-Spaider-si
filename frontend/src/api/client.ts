@@ -1,6 +1,9 @@
 import axios from 'axios'
 
-const BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
+// In development, use Vite's /api proxy (configured for the Windows launcher
+// on port 8001). Production deployments can set VITE_API_URL when the API is
+// hosted separately; same-origin deployments use the current site.
+const BASE_URL = import.meta.env.VITE_API_URL || (import.meta.env.DEV ? '' : window.location.origin)
 
 export const api = axios.create({
   baseURL: `${BASE_URL}/api/v1`,
