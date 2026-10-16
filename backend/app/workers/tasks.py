@@ -160,13 +160,17 @@ def run_scan(self, scan_id: str, plugin: str, targets: List[str], options: dict)
 
 
 def _execute_nmap_scan(targets: List[str], scan_type: str = "full",
-                       ports: Optional[str] = None, timing: int = 3, scan_id: Optional[str] = None):
+                       ports: Optional[str] = None, timing: int = 3, scan_id: Optional[str] = None,
+                       api_key: Optional[str] = None):
     """Execute Nmap scan and parse results into the asset database."""
     logger.info("Starting Nmap scan", targets=targets, scan_type=scan_type)
 
     # Build Nmap arguments
     nmap_bin = getattr(settings, "resolved_nmap_path", settings.nmap_path)
     nmap_args = [nmap_bin]
+
+    nse_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "plugins", "nmap", "vulners.nse"))
+    script_target = nse_path if os.path.isfile(nse_path) else "vulners"
 
     scan_profiles = {
         "quick": ["-T4", "-F", "-sV"],
@@ -175,9 +179,18 @@ def _execute_nmap_scan(targets: List[str], scan_type: str = "full",
         "udp": ["-sU", "-T3", "--top-ports", "100"],
         "os": ["-O", "-sV", "-T4"],
         "version": ["-sV", "--version-all", "-T3"],
+        "vuln": ["-sV", "--version-intensity", "5", "--script", script_target],
     }
 
-    nmap_args.extend(scan_profiles.get(scan_type, scan_profiles["full"]))
+    profile_args = list(scan_profiles.get(scan_type, scan_profiles["full"]))
+    key = (api_key or getattr(settings, "effective_nmap_api_key", "") or os.getenv("NMAP_API_KEY", "") or os.getenv("VULNERS_API_KEY", "")).strip()
+
+    if key and (scan_type in ("vuln", "full") or "--script" in profile_args):
+        if "--script" not in profile_args:
+            profile_args.extend(["--script", script_target])
+        profile_args.extend(["--script-args", f"vulners.api_key={key}"])
+
+    nmap_args.extend(profile_args)
 
     if ports:
         nmap_args.extend(["-p", ports])
@@ -200,7 +213,7 @@ def _execute_nmap_scan(targets: List[str], scan_type: str = "full",
         parsed = _parse_nmap_xml(result_file)
         _store_nmap_results(parsed, scan_id)
         logger.info("Nmap scan complete", hosts_found=len(parsed))
-        return {"hosts": len(parsed), "result_file": result_file, "parsed": parsed[:5]}
+        return {"hosts": len(parsed), "result_file": result_file, "parsed": parsed[:5], "api_key_configured": bool(key)}
 
     except subprocess.TimeoutExpired:
         logger.error("Nmap scan timed out")
@@ -212,8 +225,9 @@ def _execute_nmap_scan(targets: List[str], scan_type: str = "full",
 
 @celery_app.task(name="app.workers.tasks.run_nmap_scan", bind=True, max_retries=2)
 def run_nmap_scan(self, targets: List[str], scan_type: str = "full",
-                  ports: Optional[str] = None, timing: int = 3, scan_id: Optional[str] = None):
-    return _execute_nmap_scan(targets, scan_type, ports, timing, scan_id)
+                  ports: Optional[str] = None, timing: int = 3, scan_id: Optional[str] = None,
+                  api_key: Optional[str] = None):
+    return _execute_nmap_scan(targets, scan_type, ports, timing, scan_id, api_key)
 
 
 def _parse_nmap_xml(xml_file: str) -> list:

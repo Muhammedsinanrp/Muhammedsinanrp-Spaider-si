@@ -16,8 +16,9 @@ const TOOLS = [
     fields: [
       { key: 'target',    label: 'Target(s)',   placeholder: '192.168.1.0/24  or  10.0.0.1', type: 'text' },
       { key: 'scan_type', label: 'Scan Profile', type: 'select',
-        options: ['quick','full','stealth','udp','os','version','web'] },
+        options: ['quick','full','vuln','stealth','udp','os','version','web'] },
       { key: 'ports',     label: 'Ports (optional)', placeholder: '22,80,443  or  1-1024', type: 'text' },
+      { key: 'api_key',   label: 'Vulners API Key (optional)', placeholder: 'Overrides NMAP_API_KEY env var', type: 'password' },
     ],
     task: 'run_nmap_scan',
     queue: 'RED',
@@ -1094,7 +1095,8 @@ export default function ToolsPanel({ open, onClose }: ToolsPanelProps) {
                     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>
                       {[
                         { label: '⚡ Quick Scan', type: 'quick', desc: 'Top 100 ports, fast' },
-                        { label: '🔬 Full Scan', type: 'full', desc: 'All ports, OS detect' },
+                        { label: '🛡️ Vuln CVE Scan', type: 'vuln', desc: 'Vulners database (Key Active)' },
+                        { label: '🔬 Full Scan', type: 'full', desc: 'All ports, OS detect & CVEs' },
                         { label: '👤 Stealth', type: 'stealth', desc: 'SYN scan, low noise' },
                         { label: '🌐 Web Ports', type: 'web', desc: '80,443,8080,8443' },
                       ].map(p => (

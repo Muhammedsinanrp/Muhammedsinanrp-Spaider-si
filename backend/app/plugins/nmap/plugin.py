@@ -10,7 +10,7 @@ import structlog
 
 logger = structlog.get_logger(__name__)
 
-AUTH_WARNING = "⚠️ Only scan systems you are authorised to test. Ensure a valid scope and authorization document exists."
+AUTH_WARNING = "[!] Only scan systems you are authorised to test. Ensure a valid scope and authorization document exists."
 
 
 PLUGIN_META = {
@@ -32,13 +32,20 @@ def scan(
     ports: Optional[str] = None,
     timing: int = 3,
     results_dir: str = "./scan_results",
+    api_key: Optional[str] = None,
 ) -> dict:
-    """Run Nmap scan and return parsed results."""
+    """Run Nmap scan and return parsed results with Vulners API support."""
     from app.core.config import settings
 
     nmap_path = getattr(settings, "resolved_nmap_path", getattr(settings, "nmap_path", "nmap"))
+    key = (api_key or getattr(settings, "effective_nmap_api_key", "") or os.getenv("NMAP_API_KEY", "") or os.getenv("VULNERS_API_KEY", "")).strip()
+
     os.makedirs(results_dir, exist_ok=True)
     result_file = os.path.join(results_dir, f"nmap_{uuid.uuid4()}.xml")
+
+    nse_path = os.path.join(os.path.dirname(__file__), "vulners.nse")
+    has_local_nse = os.path.isfile(nse_path)
+    script_target = nse_path if has_local_nse else "vulners"
 
     scan_profiles = {
         "quick":   ["-T4", "-F", "-sV"],
@@ -47,10 +54,20 @@ def scan(
         "udp":     ["-sU", "-T3", "--top-ports", "100"],
         "os":      ["-O", "-sV", "-T4"],
         "version": ["-sV", "--version-all", "-T3"],
+        "vuln":    ["-sV", "--version-intensity", "5", "--script", script_target],
+        "web":     ["-T4", "-sV", "-p", "80,443,8080,8443,8000,8888"],
     }
 
-    args = [nmap_path] + scan_profiles.get(scan_type, scan_profiles["quick"])
-    if ports:
+    profile_args = list(scan_profiles.get(scan_type, scan_profiles["quick"]))
+
+    # Attach Vulners API key if present or scanning for vulnerabilities
+    if key and (scan_type in ("vuln", "full") or "--script" in profile_args):
+        if "--script" not in profile_args:
+            profile_args.extend(["--script", script_target])
+        profile_args.extend(["--script-args", f"vulners.api_key={key}"])
+
+    args = [nmap_path] + profile_args
+    if ports and "-p" not in profile_args:
         args += ["-p", ports]
     args += ["-oX", result_file] + targets
 
@@ -59,10 +76,16 @@ def scan(
         if result.returncode != 0:
             return {"error": result.stderr, "mock": False, "authorization_warning": AUTH_WARNING}
         parsed = _parse_xml(result_file)
-        return {"hosts": len(parsed), "result_file": result_file, "parsed": parsed, "authorization_warning": AUTH_WARNING}
+        return {
+            "hosts": len(parsed),
+            "result_file": result_file,
+            "parsed": parsed,
+            "authorization_warning": AUTH_WARNING,
+            "api_key_configured": bool(key),
+        }
     except FileNotFoundError:
         logger.warning("Nmap not found — returning mock data")
-        return _mock_result(targets)
+        return _mock_result(targets, key=key)
     except subprocess.TimeoutExpired:
         return {"error": "Scan timed out", "authorization_warning": AUTH_WARNING}
 
@@ -91,13 +114,23 @@ def _parse_xml(xml_file: str) -> list:
             for p in port_data:
                 if p.get("state", {}).get("@state") == "open":
                     svc = p.get("service", {})
-                    ports.append({
+                    port_info = {
                         "port": int(p.get("@portid", 0)),
                         "protocol": p.get("@protocol", "tcp"),
                         "name": svc.get("@name", "unknown"),
                         "product": svc.get("@product", ""),
                         "version": svc.get("@version", ""),
-                    })
+                    }
+                    # Parse script outputs (e.g., vulners)
+                    raw_scripts = p.get("script", [])
+                    if isinstance(raw_scripts, dict):
+                        raw_scripts = [raw_scripts]
+                    if raw_scripts:
+                        port_info["scripts"] = [{
+                            "id": s.get("@id", ""),
+                            "output": s.get("@output", "")
+                        } for s in raw_scripts]
+                    ports.append(port_info)
             os_info = host.get("os", {}).get("osmatch", {})
             if isinstance(os_info, list):
                 os_info = os_info[0] if os_info else {}
@@ -114,14 +147,27 @@ def _parse_xml(xml_file: str) -> list:
         return []
 
 
-def _mock_result(targets: list) -> dict:
+def _mock_result(targets: list, key: Optional[str] = None) -> dict:
     return {
-        "hosts": 3, "mock": True,
+        "hosts": 3,
+        "mock": True,
+        "api_key_configured": bool(key),
+        "engine": "Nmap + Vulners",
         "authorization_warning": AUTH_WARNING,
         "parsed": [
-            {"ip": "192.168.1.1",  "hostname": "router.local",  "os": "Linux",        "ports": [{"port": 22, "name": "ssh"}, {"port": 80, "name": "http"}]},
-            {"ip": "192.168.1.10", "hostname": "web01.local",   "os": "Ubuntu 22.04", "ports": [{"port": 80, "name": "http"}, {"port": 443, "name": "https"}, {"port": 22, "name": "ssh"}]},
-            {"ip": "192.168.1.20", "hostname": "db01.local",    "os": "Debian 11",    "ports": [{"port": 5432, "name": "postgresql"}, {"port": 22, "name": "ssh"}]},
+            {
+                "ip": targets[0] if targets and "/" not in targets[0] else "192.168.1.10",
+                "hostname": "web-target.local",
+                "os": "Ubuntu Linux (Linux 5.15)",
+                "ports": [
+                    {"port": 22, "name": "ssh", "product": "OpenSSH", "version": "8.2p1"},
+                    {"port": 80, "name": "http", "product": "nginx", "version": "1.18.0",
+                     "scripts": [{"id": "vulners", "output": "CVE-2021-23017 (9.8 CVSS) - NGINX 1.18.0 heap buffer overflow"}]},
+                    {"port": 443, "name": "https", "product": "nginx", "version": "1.18.0"},
+                ]
+            },
+            {"ip": "192.168.1.1",  "hostname": "gateway.local",  "os": "Linux Embedded", "ports": [{"port": 53, "name": "domain"}, {"port": 80, "name": "http"}]},
+            {"ip": "192.168.1.20", "hostname": "db.local",       "os": "Debian 11",       "ports": [{"port": 5432, "name": "postgresql", "version": "13.4"}]},
         ],
     }
 

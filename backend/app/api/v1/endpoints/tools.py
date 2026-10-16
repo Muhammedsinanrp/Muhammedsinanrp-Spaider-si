@@ -49,7 +49,8 @@ async def run_tool(payload: ToolRunRequest):
             from app.plugins.nmap.plugin import scan, analyze, normalize, report
             result = scan(targets=targets or ["192.168.1.0/24"],
                           scan_type=options.get("scan_type", "quick"),
-                          ports=options.get("ports"))
+                          ports=options.get("ports"),
+                          api_key=options.get("api_key"))
             analysis = analyze(result)
             normalized = normalize(result)
             report_str = report(result)

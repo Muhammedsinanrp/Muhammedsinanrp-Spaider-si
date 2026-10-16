@@ -1,8 +1,10 @@
 """SPAIDER application configuration."""
 
-from typing import List
+import os
+import shutil
+from typing import List, Any, Union
 from pydantic_settings import BaseSettings
-from pydantic import Field
+from pydantic import Field, field_validator
 
 
 class Settings(BaseSettings):
@@ -47,12 +49,29 @@ class Settings(BaseSettings):
     default_llm_model: str = "gpt-4o"
 
     # ── CORS ───────────────────────────────────────────────────────────────
-    allowed_origins: List[str] = Field(
+    allowed_origins: Union[List[str], str] = Field(
         default=["http://localhost:3000", "http://localhost:5173"],
     )
 
-    # ── Security engine paths ──────────────────────────────────────────────
+    @field_validator("allowed_origins", mode="before")
+    @classmethod
+    def assemble_cors_origins(cls, v: Any) -> List[str]:
+        if isinstance(v, str):
+            if v.startswith("[") and v.endswith("]"):
+                import json
+                try:
+                    return json.loads(v)
+                except Exception:
+                    pass
+            return [i.strip() for i in v.split(",") if i.strip()]
+        elif isinstance(v, list):
+            return v
+        return ["http://localhost:3000", "http://localhost:5173"]
+
+    # ── Security engine paths & keys ───────────────────────────────────────
     nmap_path: str = Field(default="nmap", env="NMAP_PATH")
+    nmap_api_key: str = Field(default="", env="NMAP_API_KEY")
+    vulners_api_key: str = Field(default="", env="VULNERS_API_KEY")
     nuclei_path: str = Field(default="nuclei", env="NUCLEI_PATH")
     scan_results_dir: str = Field(default="./scan_results", env="SCAN_RESULTS_DIR")
     malware_samples_dir: str = Field(default="./malware_samples", env="MALWARE_SAMPLES_DIR")
@@ -79,6 +98,10 @@ class Settings(BaseSettings):
         return self.nuclei_path
 
     @property
+    def effective_nmap_api_key(self) -> str:
+        return (self.nmap_api_key or self.vulners_api_key or "").strip()
+
+    @property
     def resolved_nmap_path(self) -> str:
         import shutil, os
         if self.nmap_path != "nmap" and (shutil.which(self.nmap_path) or os.path.isfile(self.nmap_path)):
@@ -86,12 +109,26 @@ class Settings(BaseSettings):
         in_path = shutil.which("nmap")
         if in_path:
             return in_path
+        root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
+        for candidate in ["nmap.exe", "nmap"]:
+            p = os.path.join(root, "bin", candidate)
+            if os.path.isfile(p):
+                return p
         for default_win in [r"C:\Program Files (x86)\Nmap\nmap.exe", r"C:\Program Files\Nmap\nmap.exe"]:
             if os.path.isfile(default_win):
                 return default_win
         return self.nmap_path
 
-    model_config = {"env_file": ".env", "case_sensitive": False}
+    model_config = {
+        "env_file": (
+            os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..", ".env")),
+            os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".env")),
+            ".env",
+        ),
+        "env_file_encoding": "utf-8",
+        "case_sensitive": False,
+        "extra": "ignore",
+    }
 
 
 settings = Settings()

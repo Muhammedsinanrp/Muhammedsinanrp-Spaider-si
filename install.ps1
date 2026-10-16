@@ -87,16 +87,27 @@ try {
 
 # 4. Check Nmap
 Write-Host ""
-Write-Host "[*] Step 4: Checking Nmap..." -ForegroundColor Cyan
+Write-Host "[*] Step 4: Checking Nmap & Vulners Engine..." -ForegroundColor Cyan
+$nmapFound = $false
 if (Get-Command nmap -ErrorAction SilentlyContinue) {
     Write-Host "[OK] Nmap detected in PATH." -ForegroundColor Green
+    $nmapFound = $true
 } else {
-    $defaultNmap = "C:\Program Files (x86)\Nmap\nmap.exe"
-    if (Test-Path $defaultNmap) {
-        Write-Host "[OK] Nmap detected at $defaultNmap" -ForegroundColor Green
-    } else {
-        Write-Host "[!] Nmap is optional for port scans. Download from: https://nmap.org/download.html" -ForegroundColor Yellow
+    foreach ($cand in @(
+        (Join-Path $BinDir "nmap.exe"),
+        "C:\Program Files\Nmap\nmap.exe",
+        "C:\Program Files (x86)\Nmap\nmap.exe"
+    )) {
+        if (Test-Path $cand) {
+            Write-Host "[OK] Nmap detected at $cand" -ForegroundColor Green
+            $nmapFound = $true
+            break
+        }
     }
+}
+if (-not $nmapFound) {
+    Write-Host "[!] Nmap is optional for local port scans. Download from: https://nmap.org/download.html" -ForegroundColor Yellow
+    Write-Host "    Or install via: winget install Insecure.Nmap" -ForegroundColor Yellow
 }
 
 # 5. Virtualenv & Dependencies
